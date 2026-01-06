@@ -191,7 +191,7 @@ async function cyphersStart() {
 
     if (usePairingCode && !cyphers.authState.creds.registered) {
         const phoneNumber = await question('Enter bot phone number 📱😏 : Example 62xxx\n');
-        const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERS");
+        const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERSS");
         console.log(`\x1b[1;33mPairing Code: ${code}\x1b[0m`);
     }
 
