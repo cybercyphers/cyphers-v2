@@ -1,7 +1,7 @@
 {
-    "name": "Modul Crash V4",
-    "version": "5.0.0",
-    "description": "script bot whatsapp by KapotID",
+    "name": "CYPHERS-V2",
+    "version": "2.0.0",
+    "description": "script bot whatsapp by cybercyphers",
     "main": "index.js",
     "type": "commonjs",
     "scripts": {
@@ -11,7 +11,7 @@
         "whiskeysockets",
         "multi-device"
     ],
-    "author": "KapotID",
+    "author": "Cybercyphers",
     "license": "MIT",
     "dependencies": {
         "@adiwajshing/keyed-db": "^0.2.4",
