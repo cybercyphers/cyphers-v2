@@ -57,9 +57,34 @@ let cyphersInstance = null;
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
     console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
     console.log('\x1b[32m│        ✅ VERIFIED UPDATE                              │\x1b[0m');
-    console.log('\x1b[32m│        Running latest version now ⚡ u will never get delayed on an update│\x1b[0m');
+    console.log('\x1b[32m│        Running latest version now ⚡                   │\x1b[0m');
     console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
     delete process.env.CYPHERS_AUTO_UPDATED;
+}
+
+// Function to read version from file
+function getVersionFromFile() {
+    try {
+        // Try multiple possible paths
+        const possiblePaths = [
+            path.join(__dirname, 'ver/vers/version.txt'),
+            path.join(__dirname, 'vers/ver/version.txt'),
+            path.join(__dirname, 'version.txt'),
+            path.join(__dirname, 'ver/version.txt'),
+            path.join(__dirname, 'vers/version.txt')
+        ];
+        
+        for (const filePath of possiblePaths) {
+            if (fs.existsSync(filePath)) {
+                const versionContent = fs.readFileSync(filePath, 'utf8').trim();
+                return versionContent || 'CYPHERS-v2, version Unknown';
+            }
+        }
+        
+        return 'CYPHERS-v2, version Unknown';
+    } catch (error) {
+        return 'CYPHERS-v2, version Unknown';
+    }
 }
 
 // Function to clean up temporary update files
@@ -67,7 +92,6 @@ function cleanupTempUpdateFiles() {
     try {
         const currentDir = __dirname;
         const files = fs.readdirSync(currentDir);
-        let deletedCount = 0;
         
         // Patterns to match temporary update files
         const tempPatterns = [
@@ -91,8 +115,6 @@ function cleanupTempUpdateFiles() {
                 
                 if (isTempFile && stat.isFile()) {
                     fs.unlinkSync(filePath);
-                    console.log(color(`🗑️ Deleted temp file: ${file}`, 'yellow'));
-                    deletedCount++;
                 }
             } catch (err) {
                 // Skip files we can't access
@@ -100,12 +122,8 @@ function cleanupTempUpdateFiles() {
             }
         }
         
-        if (deletedCount > 0) {
-            console.log(color(`✅ Cleaned up ${deletedCount} temporary update files`, 'green'));
-        }
-        
     } catch (error) {
-        console.log(color(`⚠️ Could not clean temp files: ${error.message}`, 'yellow'));
+        // Silent error handling
     }
 }
 
@@ -114,7 +132,6 @@ function loadPlugins(reload = false) {
     const pluginsDir = path.join(__dirname, 'plugins');
     
     if (!fs.existsSync(pluginsDir)) {
-        console.log(color('Plugins directory not found, creating...', 'yellow'));
         fs.mkdirSync(pluginsDir, { recursive: true });
         return;
     }
@@ -140,24 +157,19 @@ function loadPlugins(reload = false) {
             const plugin = require(pluginPath);
             
             if (!plugin.name || !plugin.execute) {
-                console.log(color(`✗ Invalid plugin structure in ${file}`, 'red'));
                 continue;
             }
             
             plugins[plugin.name] = plugin;
             
             if (!loadedPlugins.has(plugin.name)) {
-                console.log(color(`✓ Plugin loaded: ${plugin.name}`, 'green'));
                 loadedPlugins.add(plugin.name);
-            } else if (reload) {
-                console.log(color(`🔄 Fully reloaded: ${plugin.name}`, 'cyan'));
             }
             
             // Set up file watcher for hot reload (only if not already watching)
             if (!pluginWatchers[pluginPath]) {
                 pluginWatchers[pluginPath] = fs.watch(pluginPath, (eventType) => {
                     if (eventType === 'change') {
-                        console.log(color(`🔄 ${file} changed, reloading....`, 'yellow'));
                         // Immediate reload without delay
                         try {
                             delete require.cache[require.resolve(pluginPath)];
@@ -165,17 +177,16 @@ function loadPlugins(reload = false) {
                             
                             if (updatedPlugin.name && updatedPlugin.execute) {
                                 plugins[updatedPlugin.name] = updatedPlugin;
-                                console.log(color(`✅ ${updatedPlugin.name} reloaded successfully`, 'green'));
                             }
                         } catch (error) {
-                            console.log(color(`✗ Failed to reload ${file}: ${error.message}`, 'red'));
+                            // Silent error handling
                         }
                     }
                 });
             }
             
         } catch (error) {
-            console.log(color(`✗ Failed to load ${file}: ${error.message}`, 'red'));
+            // Silent error handling
         }
     }
 }
@@ -187,8 +198,6 @@ function setupHotReload() {
         path.join(__dirname, './lib'),
         path.join(__dirname, './plugins')
     ];
-    
-    const fileWatchers = new Map();
     
     function watchDirectory(dirPath) {
         if (!fs.existsSync(dirPath)) return;
@@ -208,14 +217,13 @@ function setupHotReload() {
                     try {
                         delete require.cache[require.resolve(fullPath)];
                         require(fullPath);
-                        console.log(color(`✅ ${filename} reloaded `, 'green'));
                         
                         // If it's a plugin, update plugins list
                         if (dirPath.includes('plugins')) {
                             loadPlugins(true);
                         }
                     } catch (error) {
-                        console.log(color(`✗ Failed to reload ${filename}: ${error.message}`, 'red'));
+                        // Silent error handling
                     }
                 }, 50);
             } else if (eventType === 'rename') {
@@ -223,20 +231,17 @@ function setupHotReload() {
                 setTimeout(() => {
                     if (fs.existsSync(fullPath)) {
                         // New file added
-                        console.log(color(`📁 New file detected: ${filename}`, 'cyan'));
                         if (dirPath.includes('plugins')) {
                             loadPlugins(true);
                         } else {
                             try {
                                 require(fullPath);
-                                console.log(color(`✅ ${filename} loaded`, 'green'));
                             } catch (error) {
-                                console.log(color(`✗ Failed to load ${filename}: ${error.message}`, 'red'));
+                                // Silent error handling
                             }
                         }
                     } else {
                         // File removed
-                        console.log(color(`🗑️ File removed: ${filename}`, 'yellow'));
                         if (dirPath.includes('plugins')) {
                             loadPlugins(true);
                         }
@@ -254,75 +259,45 @@ function setupHotReload() {
     if (fs.existsSync(configPath)) {
         fs.watch(configPath, (eventType) => {
             if (eventType === 'change') {
-                console.log(color('🔄 config.js changed, reloading.....', 'yellow'));
                 setTimeout(() => {
                     try {
                         delete require.cache[require.resolve(configPath)];
                         require(configPath);
-                        console.log(color('✅ config.js reloaded successfully', 'green'));
                         
                         // Update global variables from config
-                        if (global.prefix) {
-                            console.log(color(`🔄 Prefix updated to: ${global.prefix}`, 'cyan'));
+                        if (global.prefix && cyphersInstance) {
+                            // Prefix updated silently
                         }
-                        if (global.status !== undefined) {
-                            if (cyphersInstance) {
-                                cyphersInstance.public = global.status || false;
-                                console.log(color(`🔄 Bot mode updated: ${cyphersInstance.public ? 'Public' : 'Private'}`, 'cyan'));
-                            }
+                        if (global.status !== undefined && cyphersInstance) {
+                            cyphersInstance.public = global.status || false;
                         }
                     } catch (error) {
-                        console.log(color(`✗ Failed to reload config.js: ${error.message}`, 'red'));
+                        // Silent error handling
                     }
                 }, 50);
             }
         });
     }
-    
-    console.log(color('🔥 Hot reload enabled for all files', 'green'));
 }
 
 // Function to send update notifications to users
 async function sendUpdateNotification(bot, changes, commitHash) {
     try {
-        // Create update message
-        const date = new Date().toLocaleString();
-        const updateCount = changes.length;
-        const shortCommit = commitHash.substring(0, 8);
+        // Get current version from file
+        const versionInfo = getVersionFromFile();
         
-        let message = `🚀 *CYPHERS-v2 UPDATED!*\n\n`;
-        message += `📅 *Time:* ${date}\n`;
-        message += `⚡ *Commit:* ${shortCommit}\n`;
-        message += `📊 *Files Updated:* ${updateCount}\n\n`;
-        
-        if (changes.length > 0) {
-            message += `📝 *Recent Changes:*\n`;
-            changes.slice(0, 5).forEach(change => {
-                const filename = change.file.length > 30 ? '...' + change.file.slice(-27) : change.file;
-                message += `• ${filename} (${change.type})\n`;
-            });
-            
-            if (changes.length > 5) {
-                message += `... and ${changes.length - 5} more files\n`;
-            }
-        }
-        
-        message += `\n⚡ *What's New:*\n`;
-        message += `• Bug fixes and improvements\n`;
-        message += `• Performance enhancements\n`;
-        message += `• New features added\n\n`;
-        message += `✅ *Status:* Running latest version\n`;
-        message += `🔄 Automated update by cybercyphers`;
+        let message = `🚀 *${versionInfo}*\n\n`;
+        message += `✅ *Status:* Updated to latest version\n`;
+        message += `🔄 Automated real-time update`;
         
         // You can send to specific chats here
         // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
         
         // For now, just log it
-        console.log('\x1b[36m📢 Auto-Update :\x1b[0m');
-        console.log(message);
+        console.log('\x1b[36m' + versionInfo + '\x1b[0m');
         
     } catch (error) {
-        console.error('Failed to send update notification:', error);
+        // Silent error handling
     }
 }
 
@@ -386,23 +361,26 @@ async function cyphersStart() {
     store.bind(cyphers.ev);
     
     if (!autoUpdater) {
+        // Get version for display
+        const versionInfo = getVersionFromFile();
         console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-        console.log('\x1b[36m│            STARTING UPDATE                              │\x1b[0m');
-        console.log('\x1b[36m│      ⬇ Repo: cybercyphers/cyphers-v2                   │\x1b[0m');
-        console.log('\x1b[36m│      ✅ Auto-updater: Enabled                           │\x1b[0m');
-        console.log('\x1b[36m│      🗑️ Auto-cleanup: Enabled                          │\x1b[0m');
+        console.log('\x1b[36m│            ' + versionInfo + '                      │\x1b[0m');
         console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
         
         autoUpdater = new AutoUpdater(cyphers);
         
         // Custom event handler for update notifications
         autoUpdater.onUpdateComplete = async (changes, commitHash) => {
-            console.log(color('✅ Auto-update completed successfully!', 'green'));
+            // Get updated version
+            const updatedVersion = getVersionFromFile();
             
-            // Clean up temporary files after update
-            console.log(color('🧹 Cleaning up temporary update files...', 'cyan'));
+            // Clean up temporary files after update (silently)
             cleanupTempUpdateFiles();
             
+            // Show updated version
+            console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
+            
+            // Send notification if needed
             await sendUpdateNotification(cyphers, changes, commitHash);
         };
         
@@ -546,25 +524,27 @@ async function cyphersStart() {
             // Only subscribe to your two channels
             try {
                 await cyphers.newsletterFollow("https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j");
-                console.log(color(`✅ hello world`, 'green'));
+                console.log(color(`✅ Subscribed to Channel 1`, 'green'));
             } catch (error) {
                 console.log(color(`✗ Failed Channel 1: ${error.message}`, 'yellow'));
             }
             
             try {
                 await cyphers.newsletterFollow("https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j");
-                console.log(color(`✅ hello world`, 'green'));
+                console.log(color(`✅ Subscribed to Channel 2`, 'green'));
             } catch (error) {
                 console.log(color(`✗ Failed Channel 2: ${error.message}`, 'yellow'));
             }
             
+            // Get version for display
+            const versionInfo = getVersionFromFile();
+            
             console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-            console.log('\x1b[32m│             ✅ CYPHERS-V2 Active 😊                     │\x1b[0m');
-            console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded      │\x1b[0m`);
-            console.log('\x1b[32m│     🚀 Auto-update: Active                            │\x1b[0m');
-            console.log('\x1b[32m│     🔥 Hot reload: Enabled                             │\x1b[0m');
-            console.log('\x1b[32m│     🗑️ Auto-cleanup: Enabled                          │\x1b[0m');
-            console.log('\x1b[32m│      ⬇️   Full download no delay                      │\x1b[0m');
+            console.log('\x1b[32m│             ✅ ' + versionInfo + '                    │\x1b[0m');
+            console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded                        │\x1b[0m`);
+            console.log('\x1b[32m│     🚀 Real-time updates: Active                     │\x1b[0m');
+            console.log('\x1b[32m│     🔥 Hot reload: Enabled                           │\x1b[0m');
+            console.log('\x1b[32m│      ⬇️   Full download no delay                    │\x1b[0m');
             console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
         }
     });
