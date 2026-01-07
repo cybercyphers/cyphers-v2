@@ -2,7 +2,9 @@ console.clear();
 console.log('Starting...');
 require('./settings/config');
 
-
+// ============================
+// AUTO-UPDATER IMPORT
+// ============================
 const AutoUpdater = require('./deadline');
 
 const { 
@@ -50,6 +52,35 @@ let pluginWatchers = {};
 let loadedPlugins = new Set();
 let autoUpdater = null;
 let cyphersInstance = null;
+let botRestarting = false;
+
+// Function to load and apply config settings
+function applyConfigSettings() {
+    try {
+        // Clear cache and reload config
+        const configPath = path.join(__dirname, './settings/config.js');
+        delete require.cache[require.resolve(configPath)];
+        require(configPath);
+        
+        // Apply settings to bot instance if it exists
+        if (cyphersInstance) {
+            // Update public/private mode
+            cyphersInstance.public = global.status !== undefined ? global.status : true;
+            
+            // Update other settings as needed
+            if (global.prefix) {
+                console.log(color(`⚡ Prefix: ${global.prefix}`, 'cyan'));
+            }
+            
+            console.log(color(`⚡ Bot mode: ${cyphersInstance.public ? 'Public' : 'Private'}`, 'cyan'));
+        }
+        
+        return true;
+    } catch (error) {
+        console.log(color(`✗ Failed to apply config: ${error.message}`, 'red'));
+        return false;
+    }
+}
 
 // Check if this is a restart after auto-update
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
@@ -59,6 +90,9 @@ if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
     console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
     delete process.env.CYPHERS_AUTO_UPDATED;
 }
+
+// Apply config settings immediately on startup
+applyConfigSettings();
 
 // Function to read version from file
 function getVersionFromFile() {
@@ -216,6 +250,11 @@ function setupHotReload() {
                         delete require.cache[require.resolve(fullPath)];
                         require(fullPath);
                         
+                        // If config.js changed, apply settings
+                        if (filename === 'config.js') {
+                            applyConfigSettings();
+                        }
+                        
                         // If it's a plugin, update plugins list
                         if (dirPath.includes('plugins')) {
                             loadPlugins(true);
@@ -251,31 +290,6 @@ function setupHotReload() {
     
     // Watch all directories
     directoriesToWatch.forEach(dir => watchDirectory(dir));
-    
-    // Also watch config.js specifically for immediate changes
-    const configPath = path.join(__dirname, './settings/config.js');
-    if (fs.existsSync(configPath)) {
-        fs.watch(configPath, (eventType) => {
-            if (eventType === 'change') {
-                setTimeout(() => {
-                    try {
-                        delete require.cache[require.resolve(configPath)];
-                        require(configPath);
-                        
-                        // Update global variables from config
-                        if (global.prefix && cyphersInstance) {
-                            // Prefix updated silently
-                        }
-                        if (global.status !== undefined && cyphersInstance) {
-                            cyphersInstance.public = global.status || false;
-                        }
-                    } catch (error) {
-                        // Silent error handling
-                    }
-                }, 50);
-            }
-        });
-    }
 }
 
 // Function to send update notifications to users
@@ -286,7 +300,7 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         
         let message = `🚀 *${versionInfo}*\n\n`;
         message += `✅ *Status:* Updated to latest version\n`;
-        message += `🔄 Automated real-time update`;
+        message += `🔄 Real-time update applied`;
         
         // You can send to specific chats here
         // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
@@ -300,10 +314,18 @@ async function sendUpdateNotification(bot, changes, commitHash) {
 }
 
 async function cyphersStart() {
+    // Prevent multiple restarts
+    if (botRestarting) return;
+    botRestarting = true;
+    
     const {
         state,
         saveCreds
     } = await useMultiFileAuthState("session")
+    
+    // Apply config settings before creating socket
+    applyConfigSettings();
+    
     const cyphers = makeWASocket({
         printQRInTerminal: !usePairingCode,
         syncFullHistory: false,
@@ -349,6 +371,9 @@ async function cyphersStart() {
     });
 
     cyphersInstance = cyphers;
+    
+    // Apply config settings to the new instance
+    cyphers.public = global.status !== undefined ? global.status : true;
 
     if (usePairingCode && !cyphers.authState.creds.registered) {
         const phoneNumber = await question('Enter bot phone number 🥲 : Example 62xxx\n');
@@ -377,6 +402,9 @@ async function cyphersStart() {
             
             // Show updated version
             console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
+            
+            // Apply config settings after update
+            applyConfigSettings();
             
             // Send notification if needed
             await sendUpdateNotification(cyphers, changes, commitHash);
@@ -485,13 +513,15 @@ async function cyphersStart() {
     global.idch1  = "https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j"
     global.idch2  = "https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j"
 
-    cyphers.public = global.status || true;
-
     cyphers.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             console.log(color(lastDisconnect.error, 'deeppink'));
+            
+            // Apply config settings before handling disconnect
+            applyConfigSettings();
+            
             if (lastDisconnect.error == '') {
                 process.exit();
             } else if (reason === DisconnectReason.badSession) {
@@ -499,9 +529,11 @@ async function cyphersStart() {
                 process.exit();
             } else if (reason === DisconnectReason.connectionClosed) {
                 console.log(color('Connection closed, reconnecting...', 'deeppink'));
+                botRestarting = false;
                 process.exit();
             } else if (reason === DisconnectReason.connectionLost) {
                 console.log(color('Connection lost, reconnecting', 'deeppink'));
+                botRestarting = false;
                 process.exit();
             } else if (reason === DisconnectReason.connectionReplaced) {
                 console.log(color('Connection replaced, close current session first'));
@@ -511,14 +543,19 @@ async function cyphersStart() {
                 cyphers.logout();
             } else if (reason === DisconnectReason.restartRequired) {
                 console.log(color('Restart required...'));
+                botRestarting = false;
                 await cyphersStart();
             } else if (reason === DisconnectReason.timedOut) {
                 console.log(color('Timed out, reconnecting...'));
+                botRestarting = false;
                 cyphersStart();
             }
         } else if (connection === "connecting") {
             console.log(color('Connecting...'));
         } else if (connection === "open") {
+            // Apply config settings when connected
+            applyConfigSettings();
+            
             // Only subscribe to your two channels
             try {
                 await cyphers.newsletterFollow("https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j");
@@ -542,8 +579,11 @@ async function cyphersStart() {
             console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded                        │\x1b[0m`);
             console.log('\x1b[32m│     🚀 Real-time updates: Active                     │\x1b[0m');
             console.log('\x1b[32m│     🔥 Hot reload: Enabled                           │\x1b[0m');
+            console.log('\x1b[32m│     ⚡ Config: Live updates                           │\x1b[0m');
             console.log('\x1b[32m│      ⬇️   Full download no delay                    │\x1b[0m');
             console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
+            
+            botRestarting = false;
         }
     });
 
