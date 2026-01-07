@@ -52,12 +52,13 @@ let pluginWatchers = {};
 let loadedPlugins = new Set();
 let autoUpdater = null;
 let cyphersInstance = null;
+let ownerNumber = null; // Will be auto-detected
 
 // Check if this is a restart after auto-update
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
     console.log('\x1b[32m╔═══════════════════════════════════════════╗\x1b[0m');
-    console.log('\x1b[32m║        ✅ VERIFIED UPDATE     ║\x1b[0m');
-    console.log('\x1b[32m║        Running latest version now 🔥       ║\x1b[0m');
+    console.log('\x1b[32m║        ✅ VERIFIED UPDATE                 ║\x1b[0m');
+    console.log('\x1b[32m║        Running latest version now 🔥     ║\x1b[0m');
     console.log('\x1b[32m╚═══════════════════════════════════════════╝\x1b[0m');
     delete process.env.CYPHERS_AUTO_UPDATED;
 }
@@ -189,7 +190,7 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         message += `🔄 Automated and by cybercyphers`;
         
         // You can send to specific chats here
-         //Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
+        // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
         
         // For now, just log it
         console.log('\x1b[36m📢 Auto-Update Notification:\x1b[0m');
@@ -199,6 +200,57 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         console.error('Failed to send update notification:', error);
     }
 }
+
+// Helper functions
+function isPrivateChat(jid) {
+    return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us');
+}
+
+function isGroupChat(jid) {
+    return jid.endsWith('@g.us');
+}
+
+// Check if sender is owner - auto-detected from session
+function isOwner(sender) {
+    if (!ownerNumber) return false;
+    const senderNumber = sender.split('@')[0];
+    return senderNumber === ownerNumber;
+}
+
+// Get owner number from session
+function getOwnerNumberFromSession() {
+    try {
+        // Check session folder
+        const sessionDir = path.join(__dirname, 'session');
+        if (fs.existsSync(sessionDir)) {
+            const files = fs.readdirSync(sessionDir);
+            for (const file of files) {
+                if (file.endsWith('.json') && file.includes('creds')) {
+                    try {
+                        const credsPath = path.join(sessionDir, file);
+                        const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                        if (creds.me && creds.me.id) {
+                            // Extract number from id (e.g., "628123456789@s.whatsapp.net")
+                            const match = creds.me.id.match(/^(\d+)@/);
+                            if (match) {
+                                return match[1];
+                            }
+                        }
+                    } catch (e) {
+                        console.log(color('Error reading session file:', 'yellow'), e.message);
+                    }
+                }
+            }
+        }
+        return null;
+    } catch (error) {
+        console.log(color('Error getting owner number:', 'yellow'), error.message);
+        return null;
+    }
+}
+
+// Simple cache for waiting messages to avoid spam
+const waitingMessagesCache = new Map();
 
 async function cyphersStart() {
 	const {
@@ -259,11 +311,24 @@ async function cyphersStart() {
 
     store.bind(cyphers.ev);
     
+    // Auto-detect owner number
+    ownerNumber = getOwnerNumberFromSession();
+    if (ownerNumber) {
+        console.log(color(`Owner auto-detected: ${ownerNumber}`, 'green'));
+    } else if (cyphers.user && cyphers.user.id) {
+        // Extract from current connection
+        const match = cyphers.user.id.match(/^(\d+)@/);
+        if (match) {
+            ownerNumber = match[1];
+            console.log(color(`Owner detected from connection: ${ownerNumber}`, 'green'));
+        }
+    }
+    
     if (!autoUpdater) {
         console.log('\x1b[36m╔═══════════════════════════════════════════╗\x1b[0m');
-        console.log('\x1b[36m║            STARTING UPDATE      ║\x1b[0m');
+        console.log('\x1b[36m║            STARTING UPDATE               ║\x1b[0m');
         console.log('\x1b[36m║      🔗 Repo: cybercyphers/cyphers-v2     ║\x1b[0m');
-        console.log('\x1b[36m║      ⏱️  fully loaded             ║\x1b[0m');
+        console.log('\x1b[36m║      ⏱️  fully loaded                     ║\x1b[0m');
         console.log('\x1b[36m╚═══════════════════════════════════════════╝\x1b[0m');
         
         autoUpdater = new AutoUpdater(cyphers);
@@ -295,6 +360,38 @@ async function cyphersStart() {
             
             if (mek.key && mek.key.remoteJid === 'status@broadcast') return;
             
+            const chatJid = mek.key.remoteJid;
+            const senderJid = mek.key.participant || mek.key.remoteJid;
+            const isPrivate = isPrivateChat(chatJid);
+            const isGroup = isGroupChat(chatJid);
+            
+            // Check if bot is in private mode and this is not owner
+            if (!cyphers.public && !isOwner(senderJid) && isPrivate) {
+                // Show WhatsApp-like "waiting for messages" only once per chat
+                if (!mek.key.fromMe) {
+                    const cacheKey = `waiting_${chatJid}`;
+                    const lastMessageTime = waitingMessagesCache.get(cacheKey) || 0;
+                    
+                    // Only send message if last one was more than 1 minute ago
+                    if (Date.now() - lastMessageTime > 60000) {
+                        const waitingMsg = "⏳ *Waiting for messages...*\n\n" +
+                                          "I'm currently in private mode.\n" +
+                                          "Only the bot owner can use commands.\n" +
+                                          "Please contact the owner for access.";
+                        
+                        await cyphers.sendMessage(chatJid, { text: waitingMsg });
+                        waitingMessagesCache.set(cacheKey, Date.now());
+                    }
+                }
+                return;
+            }
+            
+            // Slow response check for groups
+            if (isGroup) {
+                // Add small delay for group messages to prevent flood
+                await sleep(500);
+            }
+            
             if (!cyphers.public && !mek.key.fromMe && chatUpdate.type === 'notify') return;
             
             if (mek.key.id.startsWith('BAE5') && mek.key.id.length === 16) return;
@@ -306,6 +403,15 @@ async function cyphersStart() {
             const prefix = global.prefix || '.';
             
             if (messageText.startsWith(prefix)) {
+                // Add extra delay for groups if command is heavy
+                if (isGroup) {
+                    const heavyCommands = ['image', 'video', 'sticker', 'download'];
+                    const commandName = messageText.slice(prefix.length).trim().split(/ +/)[0];
+                    if (heavyCommands.includes(commandName)) {
+                        await sleep(1000); // Extra delay for media commands
+                    }
+                }
+                
                 const args = messageText.slice(prefix.length).trim().split(/ +/);
                 const commandName = args.shift().toLowerCase();
                 const quoted = m.quoted || null;
@@ -341,12 +447,20 @@ async function cyphersStart() {
                         }, { quoted: m });
                     }
                 } else {
-                    const commandList = Object.values(plugins)
+                    // Show limited command list in groups to keep it fast
+                    let commandList = Object.values(plugins);
+                    
+                    // Filter for groups to show only essential commands
+                    if (isGroup) {
+                        commandList = commandList.slice(0, 5); // Show only first 5
+                    }
+                    
+                    const commandText = commandList
                         .map(p => `${prefix}${p.name} - ${p.description || ''}`)
                         .join('\n');
                     
                     await cyphers.sendMessage(m.chat, { 
-                        text: `❓ Command not found!\n\n📋 Commands:\n${commandList || 'No commands loaded'}` 
+                        text: `❓ Command not found!\n\n📋 ${isGroup ? 'Quick ' : ''}Commands:\n${commandText || 'No commands loaded'}\n\n${isGroup ? 'Type .help for full list' : ''}` 
                     }, { quoted: m });
                 }
             }
@@ -384,7 +498,14 @@ async function cyphersStart() {
     global.idch12 = "120363403578572630@newsletter"
     global.idch13 = "120363418736784979@newsletter"
 
-    cyphers.public = global.status || true;
+    // Set public/private mode (can be controlled from config)
+    cyphers.public = global.status !== undefined ? global.status : true;
+    
+    if (!cyphers.public) {
+        console.log(color('Mode: PRIVATE (Only owner can use commands)', 'yellow'));
+    } else {
+        console.log(color('Mode: PUBLIC (Everyone can use commands)', 'green'));
+    }
 
     cyphers.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
@@ -433,9 +554,13 @@ async function cyphersStart() {
             }
             
             console.log('\x1b[32m╔═══════════════════════════════════════════╗\x1b[0m');
-            console.log('\x1b[32m║             ✅ CYPHERS-V2 Active 😊         ║\x1b[0m');
-            console.log('\x1b[32m║     📦 ${Object.keys(plugins).length} plugins loaded      ║\x1b[0m');
-            console.log('\x1b[32m║     🚀 Auto-updater: Active              ║\x1b[0m');
+            console.log('\x1b[32m║             ✅ CYPHERS-V2 Active 😊     ║\x1b[0m');
+            console.log(`\x1b[32m║     📦 ${Object.keys(plugins).length} plugins loaded      ║\x1b[0m`);
+            console.log(`\x1b[32m║     🚀 Mode: ${cyphers.public ? 'Public' : 'Private'.padEnd(22)} ║\x1b[0m`);
+            console.log('\x1b[32m║     🔄 Auto-updater: Active            ║\x1b[0m');
+            if (ownerNumber) {
+                console.log(`\x1b[32m║     👑 Owner: ${ownerNumber.padEnd(29)} ║\x1b[0m`);
+            }
             console.log('\x1b[32m╚═══════════════════════════════════════════╝\x1b[0m');
         }
     });
