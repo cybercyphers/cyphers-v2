@@ -55,10 +55,10 @@ let cyphersInstance = null;
 
 // Check if this is a restart after auto-update
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
-    console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
-    console.log('\x1b[32mâ        â VERIFIED UPDATE     â\x1b[0m');
-    console.log('\x1b[32mâ        Running latest version now ð¥       â\x1b[0m');
-    console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
+    console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
+    console.log('\x1b[32m│        ✅ VERIFIED UPDATE                              │\x1b[0m');
+    console.log('\x1b[32m│        Running latest version now ⚡                   │\x1b[0m');
+    console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
     delete process.env.CYPHERS_AUTO_UPDATED;
 }
 
@@ -93,17 +93,17 @@ function loadPlugins(reload = false) {
             const plugin = require(pluginPath);
             
             if (!plugin.name || !plugin.execute) {
-                console.log(color(`â Invalid plugin structure in ${file}`, 'red'));
+                console.log(color(`✗ Invalid plugin structure in ${file}`, 'red'));
                 continue;
             }
             
             plugins[plugin.name] = plugin;
             
             if (!loadedPlugins.has(plugin.name)) {
-                console.log(color(`â Plugin loaded: ${plugin.name}`, 'green'));
+                console.log(color(`✓ Plugin loaded: ${plugin.name}`, 'green'));
                 loadedPlugins.add(plugin.name);
             } else if (reload) {
-                console.log(color(`ð Fully loaded: ${plugin.name}`, 'cyan'));
+                console.log(color(`🔄 Reloaded: ${plugin.name}`, 'cyan'));
             }
             
             // Set up file watcher for hot reload
@@ -111,7 +111,7 @@ function loadPlugins(reload = false) {
                 pluginWatchers[file] = fs.watch(pluginPath, (eventType) => {
                     if (eventType === 'change') {
                         setTimeout(() => {
-                            console.log(color(`ð ${file} changed, reloading...`, 'yellow'));
+                            console.log(color(`🔄 ${file} changed, reloading...`, 'yellow'));
                             loadPlugins(true);
                         }, 100);
                     }
@@ -119,7 +119,7 @@ function loadPlugins(reload = false) {
             }
             
         } catch (error) {
-            console.log(color(`â Failed to load ${file}: ${error.message}`, 'red'));
+            console.log(color(`✗ Failed to load ${file}: ${error.message}`, 'red'));
         }
     }
 }
@@ -137,7 +137,7 @@ function setupHotReload() {
             fs.watch(filePath, (eventType) => {
                 if (eventType === 'change') {
                     setTimeout(() => {
-                        console.log(color(`ð ${path.basename(filePath)} changed, reloading...`, 'yellow'));
+                        console.log(color(`🔄 ${path.basename(filePath)} changed, reloading...`, 'yellow'));
                         
                         // Clear require cache
                         delete require.cache[require.resolve(filePath)];
@@ -145,9 +145,9 @@ function setupHotReload() {
                         // Reload the file
                         try {
                             require(filePath);
-                            console.log(color(`â ${path.basename(filePath)} reloaded`, 'green'));
+                            console.log(color(`✅ ${path.basename(filePath)} reloaded`, 'green'));
                         } catch (error) {
-                            console.log(color(`â Failed to reload ${path.basename(filePath)}: ${error.message}`, 'red'));
+                            console.log(color(`✗ Failed to reload ${path.basename(filePath)}: ${error.message}`, 'red'));
                         }
                     }, 100);
                 }
@@ -164,16 +164,16 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         const updateCount = changes.length;
         const shortCommit = commitHash.substring(0, 8);
         
-        let message = `ð *CYPHERS-v2 UPDATED!*\n\n`;
-        message += `ð *Time:* ${date}\n`;
-        message += `ð§ *Commit:* ${shortCommit}\n`;
-        message += `ð *Files Updated:* ${updateCount}\n\n`;
+        let message = `🚀 *CYPHERS-v2 UPDATED!*\n\n`;
+        message += `📅 *Time:* ${date}\n`;
+        message += `⚡ *Commit:* ${shortCommit}\n`;
+        message += `📊 *Files Updated:* ${updateCount}\n\n`;
         
         if (changes.length > 0) {
-            message += `ð *Recent Changes:*\n`;
+            message += `📝 *Recent Changes:*\n`;
             changes.slice(0, 5).forEach(change => {
                 const filename = change.file.length > 30 ? '...' + change.file.slice(-27) : change.file;
-                message += `â¢ ${filename} (${change.type})\n`;
+                message += `• ${filename} (${change.type})\n`;
             });
             
             if (changes.length > 5) {
@@ -181,18 +181,18 @@ async function sendUpdateNotification(bot, changes, commitHash) {
             }
         }
         
-        message += `\nâ¡ *What's New:*\n`;
-        message += `â¢ Bug fixes and improvements\n`;
-        message += `â¢ Performance enhancements\n`;
-        message += `â¢ New features added\n\n`;
-        message += `â *Status:* Running latest version\n`;
-        message += `ð Automated and by cybercyphers`;
+        message += `\n⚡ *What's New:*\n`;
+        message += `• Bug fixes and improvements\n`;
+        message += `• Performance enhancements\n`;
+        message += `• New features added\n\n`;
+        message += `✅ *Status:* Running latest version\n`;
+        message += `🔄 Automated update by cybercyphers`;
         
         // You can send to specific chats here
-         //Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
+        // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
         
         // For now, just log it
-        console.log('\x1b[36mð¢ Auto-Update Notification:\x1b[0m');
+        console.log('\x1b[36m📢 Auto-Update Notification:\x1b[0m');
         console.log(message);
         
     } catch (error) {
@@ -201,58 +201,58 @@ async function sendUpdateNotification(bot, changes, commitHash) {
 }
 
 async function cyphersStart() {
-	const {
-		state,
-		saveCreds
-	} = await useMultiFileAuthState("session")
-	const cyphers = makeWASocket({
-		printQRInTerminal: !usePairingCode,
-		syncFullHistory: false,
-		markOnlineOnConnect: false,
-		connectTimeoutMs: 60000,
-		defaultQueryTimeoutMs: 0,
-		keepAliveIntervalMs: 10000,
-		generateHighQualityLinkPreview: true,
-		patchMessageBeforeSending: (message) => {
-			const requiresPatch = !!(
-				message.buttonsMessage ||
-				message.templateMessage ||
-				message.listMessage
-			);
-			if (requiresPatch) {
-				message = {
-					viewOnceMessage: {
-						message: {
-							messageContextInfo: {
-								deviceListMetadataVersion: 2,
-								deviceListMetadata: {},
-							},
-							...message,
-						},
-					},
-				};
-			}
+    const {
+        state,
+        saveCreds
+    } = await useMultiFileAuthState("session")
+    const cyphers = makeWASocket({
+        printQRInTerminal: !usePairingCode,
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0,
+        keepAliveIntervalMs: 10000,
+        generateHighQualityLinkPreview: true,
+        patchMessageBeforeSending: (message) => {
+            const requiresPatch = !!(
+                message.buttonsMessage ||
+                message.templateMessage ||
+                message.listMessage
+            );
+            if (requiresPatch) {
+                message = {
+                    viewOnceMessage: {
+                        message: {
+                            messageContextInfo: {
+                                deviceListMetadataVersion: 2,
+                                deviceListMetadata: {},
+                            },
+                            ...message,
+                        },
+                    },
+                };
+            }
 
-			return message;
-		},
-		version: (await (await fetch('https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/baileys-version.json')).json()).version,
-		browser: ["Ubuntu", "Chrome", "20.0.04"],
-		logger: pino({
-			level: 'fatal'
-		}),
-		auth: {
-			creds: state.creds,
-			keys: makeCacheableSignalKeyStore(state.keys, pino().child({
-				level: 'silent',
-				stream: 'store'
-			})),
-		}
-	});
+            return message;
+        },
+        version: (await (await fetch('https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/baileys-version.json')).json()).version,
+        browser: ["Ubuntu", "Chrome", "20.0.04"],
+        logger: pino({
+            level: 'fatal'
+        }),
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino().child({
+                level: 'silent',
+                stream: 'store'
+            })),
+        }
+    });
 
     cyphersInstance = cyphers;
 
     if (usePairingCode && !cyphers.authState.creds.registered) {
-        const phoneNumber = await question('Enter bot phone number ð±ð : Example 62xxx\n');
+        const phoneNumber = await question('Enter bot phone number 📱😏 : Example 62xxx\n');
         const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERSS");
         console.log(`\x1b[1;33mPairing Code: ${code}\x1b[0m`);
     }
@@ -260,17 +260,17 @@ async function cyphersStart() {
     store.bind(cyphers.ev);
     
     if (!autoUpdater) {
-        console.log('\x1b[36mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
-        console.log('\x1b[36mâ            STARTING UPDATE      â\x1b[0m');
-        console.log('\x1b[36mâ      ð Repo: cybercyphers/cyphers-v2     â\x1b[0m');
-        console.log('\x1b[36mâ      â±ï¸  fully loaded             â\x1b[0m');
-        console.log('\x1b[36mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
+        console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
+        console.log('\x1b[36m│            STARTING UPDATE                              │\x1b[0m');
+        console.log('\x1b[36m│      ⬇ Repo: cybercyphers/cyphers-v2                   │\x1b[0m');
+        console.log('\x1b[36m│      ✅ Auto-updater: Enabled                           │\x1b[0m');
+        console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
         
         autoUpdater = new AutoUpdater(cyphers);
         
         // Custom event handler for update notifications
         autoUpdater.onUpdateComplete = async (changes, commitHash) => {
-            console.log(color('â Auto-update completed successfully!', 'green'));
+            console.log(color('✅ Auto-update completed successfully!', 'green'));
             await sendUpdateNotification(cyphers, changes, commitHash);
         };
         
@@ -337,7 +337,7 @@ async function cyphersStart() {
                     } catch (error) {
                         console.log(color(`Error in ${plugin.name}: ${error.message}`, 'red'));
                         await cyphers.sendMessage(m.chat, { 
-                            text: `â Error: ${error.message}` 
+                            text: `❌ Error: ${error.message}` 
                         }, { quoted: m });
                     }
                 } else {
@@ -346,7 +346,7 @@ async function cyphersStart() {
                         .join('\n');
                     
                     await cyphers.sendMessage(m.chat, { 
-                        text: `â Command not found!\n\nð Commands:\n${commandList || 'No commands loaded'}` 
+                        text: `📋 Command not found!\n\n📚 Available Commands:\n${commandList || 'No commands loaded'}` 
                     }, { quoted: m });
                 }
             }
@@ -370,19 +370,13 @@ async function cyphersStart() {
         }
     });
     
-    global.idch1  = "120363398394780625@newsletter"
-    global.idch2  = "120363400516938325@newsletter"
-    global.idch3  = "120363403227392831@newsletter"
-    global.idch4  = "120363417615958545@newsletter"
-    global.idch5  = "120363417875556388@newsletter"
-    global.idch6  = "120363347147058928@newsletter"
-    global.idch7  = "120363400726940142@newsletter"
-    global.idch8  = "120363399790421982@newsletter"
-    global.idch9  = "120363418229648144@newsletter"
-    global.idch10 = "120363421353456297@newsletter"
-    global.idch11 = "120363420472611595@newsletter"
-    global.idch12 = "120363403578572630@newsletter"
-    global.idch13 = "120363418736784979@newsletter"
+    // Replace with your actual channel URLs
+    // Example format: https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j
+    global.channels = [
+        "https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j", // Replace with your actual channel
+        "https://whatsapp.com/channel/0029VaABCdefGHIjklMnOpQr", // Add more channels as needed
+        "https://whatsapp.com/channel/0029VxYZabcdEFghIJklMnoP"
+    ];
 
     cyphers.public = global.status || true;
 
@@ -418,25 +412,19 @@ async function cyphersStart() {
         } else if (connection === "connecting") {
             console.log(color('Connecting...'));
         } else if (connection === "open") {
-            const channels = [
-                global.idch1, global.idch2, global.idch3, global.idch4, global.idch5,
-                global.idch6, global.idch7, global.idch8, global.idch9, global.idch10,
-                global.idch11, global.idch12, global.idch13
-            ];
+            console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
+            console.log('\x1b[32m│             ✅ CYPHERS-V2 Active 😊                     │\x1b[0m');
+            console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded                        │\x1b[0m`);
+            console.log('\x1b[32m│     🚀 Auto-updater: Active                          │\x1b[0m');
+            console.log('\x1b[32m│     📢 Official Channel:                             │\x1b[0m');
+            console.log('\x1b[32m│     https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j │\x1b[0m');
+            console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
             
-            for (const channel of channels) {
-                try {
-                    await cyphers.newsletterFollow(channel);
-                } catch (error) {
-                    console.log(color(`Failed ${channel}: ${error.message}`, 'yellow'));
-                }
-            }
-            
-            console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
-            console.log('\x1b[32mâ             â CYPHERS-V2 Active ð         â\x1b[0m');
-            console.log('\x1b[32mâ     ð¦ ${Object.keys(plugins).length} plugins loaded      â\x1b[0m');
-            console.log('\x1b[32mâ     ð Auto-updater: Active              â\x1b[0m');
-            console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
+            // Display channel links (no newsletterFollow function in current baileys)
+            console.log(color('📢 Follow these channels:', 'cyan'));
+            global.channels.forEach((channel, index) => {
+                console.log(color(`  ${index + 1}. ${channel}`, 'yellow'));
+            });
         }
     });
 
