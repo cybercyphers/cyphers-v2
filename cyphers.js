@@ -55,10 +55,10 @@ let cyphersInstance = null;
 
 // Check if this is a restart after auto-update
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
-    console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
-    console.log('\x1b[32mâ        â VERIFIED UPDATE     â\x1b[0m');
-    console.log('\x1b[32mâ        Running latest version now ð¥       â\x1b[0m');
-    console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
+    console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
+    console.log('\x1b[32m║        ✅ VERIFIED UPDATE     ║\x1b[0m');
+    console.log('\x1b[32m║        Running latest version now ⚡       ║\x1b[0m');
+    console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
     delete process.env.CYPHERS_AUTO_UPDATED;
 }
 
@@ -93,17 +93,17 @@ function loadPlugins(reload = false) {
             const plugin = require(pluginPath);
             
             if (!plugin.name || !plugin.execute) {
-                console.log(color(`â Invalid plugin structure in ${file}`, 'red'));
+                console.log(color(`❌ Invalid plugin structure in ${file}`, 'red'));
                 continue;
             }
             
             plugins[plugin.name] = plugin;
             
             if (!loadedPlugins.has(plugin.name)) {
-                console.log(color(`â Plugin loaded: ${plugin.name}`, 'green'));
+                console.log(color(`✅ Plugin loaded: ${plugin.name}`, 'green'));
                 loadedPlugins.add(plugin.name);
             } else if (reload) {
-                console.log(color(`ð Fully loaded: ${plugin.name}`, 'cyan'));
+                console.log(color(`🔄 Reloaded: ${plugin.name}`, 'cyan'));
             }
             
             // Set up file watcher for hot reload
@@ -111,7 +111,7 @@ function loadPlugins(reload = false) {
                 pluginWatchers[file] = fs.watch(pluginPath, (eventType) => {
                     if (eventType === 'change') {
                         setTimeout(() => {
-                            console.log(color(`ð ${file} changed, reloading...`, 'yellow'));
+                            console.log(color(`🔄 ${file} changed, reloading...`, 'yellow'));
                             loadPlugins(true);
                         }, 100);
                     }
@@ -119,7 +119,7 @@ function loadPlugins(reload = false) {
             }
             
         } catch (error) {
-            console.log(color(`â Failed to load ${file}: ${error.message}`, 'red'));
+            console.log(color(`❌ Failed to load ${file}: ${error.message}`, 'red'));
         }
     }
 }
@@ -137,7 +137,7 @@ function setupHotReload() {
             fs.watch(filePath, (eventType) => {
                 if (eventType === 'change') {
                     setTimeout(() => {
-                        console.log(color(`ð ${path.basename(filePath)} changed, reloading...`, 'yellow'));
+                        console.log(color(`🔄 ${path.basename(filePath)} changed, reloading...`, 'yellow'));
                         
                         // Clear require cache
                         delete require.cache[require.resolve(filePath)];
@@ -145,9 +145,9 @@ function setupHotReload() {
                         // Reload the file
                         try {
                             require(filePath);
-                            console.log(color(`â ${path.basename(filePath)} reloaded`, 'green'));
+                            console.log(color(`✅ ${path.basename(filePath)} reloaded`, 'green'));
                         } catch (error) {
-                            console.log(color(`â Failed to reload ${path.basename(filePath)}: ${error.message}`, 'red'));
+                            console.log(color(`❌ Failed to reload ${path.basename(filePath)}: ${error.message}`, 'red'));
                         }
                     }, 100);
                 }
@@ -189,7 +189,7 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         message += `🔄 Automated and by cybercyphers`;
         
         // You can send to specific chats here
-         //Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
+        // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
         
         // For now, just log it
         console.log('\x1b[36m📢 Auto-Update Notification:\x1b[0m');
@@ -198,14 +198,6 @@ async function sendUpdateNotification(bot, changes, commitHash) {
     } catch (error) {
         console.error('Failed to send update notification:', error);
     }
-}
-
-// Helper function to send messages with proper quoting
-function sendReply(bot, chat, text, originalMessage) {
-    const isGroup = chat.endsWith('@g.us');
-    const replyOptions = isGroup ? { quoted: originalMessage } : {};
-    
-    return bot.sendMessage(chat, { text }, replyOptions);
 }
 
 async function cyphersStart() {
@@ -344,19 +336,27 @@ async function cyphersStart() {
                         
                     } catch (error) {
                         console.log(color(`Error in ${plugin.name}: ${error.message}`, 'red'));
-                        // Use helper function for proper quoting
-                        await sendReply(cyphers, m.chat, `❌ Error: ${error.message}`, m);
+                        
+                        // FIXED: Check if it's a group or DM before quoting
+                        const isGroup = m.chat.endsWith('@g.us');
+                        const replyOptions = isGroup ? { quoted: m } : {};
+                        
+                        await cyphers.sendMessage(m.chat, { 
+                            text: `❌ Error: ${error.message}` 
+                        }, replyOptions);
                     }
                 } else {
                     const commandList = Object.values(plugins)
                         .map(p => `${prefix}${p.name} - ${p.description || ''}`)
                         .join('\n');
                     
-                    // Use helper function for proper quoting
-                    await sendReply(cyphers, m.chat, 
-                        `📋 Command not found!\n\n📚 Available Commands:\n${commandList || 'No commands loaded'}`, 
-                        m
-                    );
+                    // FIXED: Check if it's a group or DM before quoting
+                    const isGroup = m.chat.endsWith('@g.us');
+                    const replyOptions = isGroup ? { quoted: m } : {};
+                    
+                    await cyphers.sendMessage(m.chat, { 
+                        text: `📋 Command not found!\n\n📚 Available Commands:\n${commandList || 'No commands loaded'}` 
+                    }, replyOptions);
                 }
             }
         } catch (err) {
@@ -379,19 +379,8 @@ async function cyphersStart() {
         }
     });
     
-    global.idch1  = "120363398394780625@newsletter"
-    global.idch2  = "120363400516938325@newsletter"
-    global.idch3  = "120363403227392831@newsletter"
-    global.idch4  = "120363417615958545@newsletter"
-    global.idch5  = "120363417875556388@newsletter"
-    global.idch6  = "120363347147058928@newsletter"
-    global.idch7  = "120363400726940142@newsletter"
-    global.idch8  = "120363399790421982@newsletter"
-    global.idch9  = "120363418229648144@newsletter"
-    global.idch10 = "120363421353456297@newsletter"
-    global.idch11 = "120363420472611595@newsletter"
-    global.idch12 = "120363403578572630@newsletter"
-    global.idch13 = "120363418736784979@newsletter"
+    global.idch1  ="0029Vb7KKdB8V0toQKtI3n2j@newsletter"
+
 
     cyphers.public = global.status || true;
 
@@ -461,6 +450,13 @@ async function cyphersStart() {
             buffer = Buffer.concat([buffer, chunk]);
         }
         return buffer;
+    };
+    
+    // Add a helper method to cyphers for proper replies
+    cyphers.reply = async (chat, text, originalMessage) => {
+        const isGroup = chat.endsWith('@g.us');
+        const options = isGroup && originalMessage ? { quoted: originalMessage } : {};
+        return cyphers.sendMessage(chat, { text }, options);
     };
     
     cyphers.ev.on('creds.update', saveCreds);
