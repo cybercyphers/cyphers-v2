@@ -57,7 +57,7 @@ let cyphersInstance = null;
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
     console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
     console.log('\x1b[32m│        ✅ VERIFIED UPDATE                              │\x1b[0m');
-    console.log('\x1b[32m│        Running latest version now ⚡  seriously                  │\x1b[0m');
+    console.log('\x1b[32m│        Running latest version now ⚡ u will never get delayed on an update│\x1b[0m');
     console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
     delete process.env.CYPHERS_AUTO_UPDATED;
 }
