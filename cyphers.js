@@ -54,6 +54,9 @@ let autoUpdater = null;
 let cyphersInstance = null;
 let ownerNumber = null; // Will be auto-detected
 
+// Quick response cache
+const commandResponseCache = new Map();
+
 // Check if this is a restart after auto-update
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
     console.log('\x1b[32m╔═══════════════════════════════════════════╗\x1b[0m');
@@ -260,7 +263,7 @@ async function cyphersStart() {
 	const cyphers = makeWASocket({
 		printQRInTerminal: !usePairingCode,
 		syncFullHistory: false,
-		markOnlineOnConnect: true, // Changed to true - this helps with message sync
+		markOnlineOnConnect: true, // Keep online to prevent sync issues
 		connectTimeoutMs: 60000,
 		defaultQueryTimeoutMs: 0,
 		keepAliveIntervalMs: 10000,
@@ -386,38 +389,34 @@ async function cyphersStart() {
                 return;
             }
             
-            // Slow response check for groups
-            if (isGroup) {
-                // Add small delay for group messages to prevent flood
-                await sleep(500);
-            }
-            
-            // REMOVED THIS LINE - This was causing commands to show "Waiting for this message"
-            // if (!cyphers.public && !mek.key.fromMe && chatUpdate.type === 'notify') return;
-            
-            if (mek.key.id.startsWith('BAE5') && mek.key.id.length === 16) return;
-            if (mek.key.id.startsWith('FatihArridho_')) return;
-            
             const m = smsg(cyphers, mek, store);
-            
             const messageText = m.body?.toLowerCase() || '';
             const prefix = global.prefix || '.';
             
             if (messageText.startsWith(prefix)) {
-                // IMMEDIATELY send a typing indicator to prevent "Waiting for message"
-                await cyphers.sendPresenceUpdate('composing', chatJid);
+                // IMMEDIATE response - send "processing" message first to prevent WhatsApp sync delay
+                let processingMsg = null;
                 
-                // Add extra delay for groups if command is heavy
-                if (isGroup) {
-                    const heavyCommands = ['image', 'video', 'sticker', 'download'];
-                    const commandName = messageText.slice(prefix.length).trim().split(/ +/)[0];
-                    if (heavyCommands.includes(commandName)) {
-                        await sleep(1000); // Extra delay for media commands
-                    }
+                // Only send processing message for commands that might take time
+                const quickCommands = ['ping', 'menu', 'help', 'owner', 'status'];
+                const commandName = messageText.slice(prefix.length).trim().split(/ +/)[0];
+                
+                if (!quickCommands.includes(commandName)) {
+                    // Send a quick "processing" message
+                    processingMsg = await cyphers.sendMessage(chatJid, { 
+                        text: `⚡ Processing ${commandName}...` 
+                    }, { quoted: m });
                 }
                 
+                // Show typing indicator
+                await cyphers.sendPresenceUpdate('composing', chatJid);
+                
+                // Remove ALL delays for commands - immediate response
+                // if (isGroup) {
+                //     await sleep(500); // REMOVED THIS DELAY
+                // }
+                
                 const args = messageText.slice(prefix.length).trim().split(/ +/);
-                const commandName = args.shift().toLowerCase();
                 const quoted = m.quoted || null;
                 
                 // Get latest plugins
@@ -442,21 +441,46 @@ async function cyphersStart() {
                             quoted: quoted
                         };
                         
+                        // Execute plugin immediately
                         await plugin.execute(cyphers, msgObj, args);
+                        
+                        // Delete processing message if it was sent
+                        if (processingMsg) {
+                            try {
+                                await cyphers.sendMessage(chatJid, {
+                                    delete: processingMsg.key
+                                });
+                            } catch {}
+                        }
                         
                     } catch (error) {
                         console.log(color(`Error in ${plugin.name}: ${error.message}`, 'red'));
+                        // Delete processing message if there was an error
+                        if (processingMsg) {
+                            try {
+                                await cyphers.sendMessage(chatJid, {
+                                    delete: processingMsg.key
+                                });
+                            } catch {}
+                        }
                         await cyphers.sendMessage(m.chat, { 
                             text: `❌ Error: ${error.message}` 
                         }, { quoted: m });
                     }
                 } else {
-                    // Show limited command list in groups to keep it fast
-                    let commandList = Object.values(plugins);
+                    // Command not found - immediate response
+                    if (processingMsg) {
+                        try {
+                            await cyphers.sendMessage(chatJid, {
+                                delete: processingMsg.key
+                            });
+                        } catch {}
+                    }
                     
-                    // Filter for groups to show only essential commands
+                    // Show limited command list
+                    let commandList = Object.values(plugins);
                     if (isGroup) {
-                        commandList = commandList.slice(0, 5); // Show only first 5
+                        commandList = commandList.slice(0, 3); // Show only first 3 for speed
                     }
                     
                     const commandText = commandList
@@ -464,12 +488,16 @@ async function cyphersStart() {
                         .join('\n');
                     
                     await cyphers.sendMessage(m.chat, { 
-                        text: `❓ Command not found!\n\n📋 ${isGroup ? 'Quick ' : ''}Commands:\n${commandText || 'No commands loaded'}\n\n${isGroup ? 'Type .help for full list' : ''}` 
+                        text: `❓ *${commandName}* not found!\n\n📋 Quick commands:\n${commandText || 'No commands loaded'}\n\nType ${prefix}help for full list` 
                     }, { quoted: m });
                 }
                 
                 // Stop typing indicator
                 await cyphers.sendPresenceUpdate('paused', chatJid);
+                
+            } else if (isGroup) {
+                // Only add small delay for non-command messages in groups
+                await sleep(200);
             }
         } catch (err) {
             console.log(color(`Message error: ${err}`, 'red'));
@@ -565,6 +593,7 @@ async function cyphersStart() {
             console.log(`\x1b[32m║     📦 ${Object.keys(plugins).length} plugins loaded      ║\x1b[0m`);
             console.log(`\x1b[32m║     🚀 Mode: ${cyphers.public ? 'Public' : 'Private'.padEnd(22)} ║\x1b[0m`);
             console.log('\x1b[32m║     🔄 Auto-updater: Active            ║\x1b[0m');
+            console.log('\x1b[32m║     ⚡ Response: Instant               ║\x1b[0m');
             if (ownerNumber) {
                 console.log(`\x1b[32m║     👑 Owner: ${ownerNumber.padEnd(29)} ║\x1b[0m`);
             }
