@@ -62,6 +62,53 @@ if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
     delete process.env.CYPHERS_AUTO_UPDATED;
 }
 
+// Function to clean up temporary update files
+function cleanupTempUpdateFiles() {
+    try {
+        const currentDir = __dirname;
+        const files = fs.readdirSync(currentDir);
+        let deletedCount = 0;
+        
+        // Patterns to match temporary update files
+        const tempPatterns = [
+            /^update_temp_\d+/,  // update_temp_1234
+            /^temp_update_\d+/,  // temp_update_1234
+            /^update_\d+_temp/,  // update_1234_temp
+            /^cyphers_temp_\d+/, // cyphers_temp_1234
+            /^temp_\d+_update/,  // temp_1234_update
+            /\.tmp\.\d+$/,       // file.tmp.1234
+            /\.temp\.\d+$/,      // file.temp.1234
+            /^\.update\.\d+\.tmp$/ // .update.1234.tmp
+        ];
+        
+        for (const file of files) {
+            try {
+                const filePath = path.join(currentDir, file);
+                const stat = fs.statSync(filePath);
+                
+                // Check if file matches any temp pattern
+                const isTempFile = tempPatterns.some(pattern => pattern.test(file));
+                
+                if (isTempFile && stat.isFile()) {
+                    fs.unlinkSync(filePath);
+                    console.log(color(`🗑️ Deleted temp file: ${file}`, 'yellow'));
+                    deletedCount++;
+                }
+            } catch (err) {
+                // Skip files we can't access
+                continue;
+            }
+        }
+        
+        if (deletedCount > 0) {
+            console.log(color(`✅ Cleaned up ${deletedCount} temporary update files`, 'green'));
+        }
+        
+    } catch (error) {
+        console.log(color(`⚠️ Could not clean temp files: ${error.message}`, 'yellow'));
+    }
+}
+
 // Enhanced plugin loader with hot reload
 function loadPlugins(reload = false) {
     const pluginsDir = path.join(__dirname, 'plugins');
@@ -343,6 +390,7 @@ async function cyphersStart() {
         console.log('\x1b[36m│            STARTING UPDATE                              │\x1b[0m');
         console.log('\x1b[36m│      ⬇ Repo: cybercyphers/cyphers-v2                   │\x1b[0m');
         console.log('\x1b[36m│      ✅ Auto-updater: Enabled                           │\x1b[0m');
+        console.log('\x1b[36m│      🗑️ Auto-cleanup: Enabled                          │\x1b[0m');
         console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
         
         autoUpdater = new AutoUpdater(cyphers);
@@ -350,6 +398,11 @@ async function cyphersStart() {
         // Custom event handler for update notifications
         autoUpdater.onUpdateComplete = async (changes, commitHash) => {
             console.log(color('✅ Auto-update completed successfully!', 'green'));
+            
+            // Clean up temporary files after update
+            console.log(color('🧹 Cleaning up temporary update files...', 'cyan'));
+            cleanupTempUpdateFiles();
+            
             await sendUpdateNotification(cyphers, changes, commitHash);
         };
         
@@ -358,6 +411,9 @@ async function cyphersStart() {
         // Update bot reference if updater already exists
         autoUpdater.bot = cyphers;
     }
+    
+    // Clean up any existing temp files on startup
+    cleanupTempUpdateFiles();
     
     // Setup enhanced hot reload
     loadPlugins();
@@ -507,7 +563,8 @@ async function cyphersStart() {
             console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded      │\x1b[0m`);
             console.log('\x1b[32m│     🚀 Auto-update: Active                            │\x1b[0m');
             console.log('\x1b[32m│     🔥 Hot reload: Enabled                             │\x1b[0m');
-            console.log('\x1b[32m│      ⬇️   Full downlaod no delay                      │\x1b[0m');
+            console.log('\x1b[32m│     🗑️ Auto-cleanup: Enabled                          │\x1b[0m');
+            console.log('\x1b[32m│      ⬇️   Full download no delay                      │\x1b[0m');
             console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
         }
     });
