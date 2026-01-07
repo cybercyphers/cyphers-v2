@@ -4,13 +4,13 @@ const { exec, spawn } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
 
-class AutoUpdater {
+class RealTimeAutoUpdater {
     constructor(botInstance = null) {
         this.bot = botInstance;
         this.repo = 'cybercyphers/cyphers-v2';
         this.repoUrl = 'https://github.com/cybercyphers/cyphers-v2.git';
         this.branch = 'main';
-        this.checkInterval = 30000; // 30 seconds
+        this.checkInterval = 5000; // 5 seconds for faster checks
         this.ignoredPatterns = [
             'node_modules',
             'package-lock.json',
@@ -27,58 +27,386 @@ class AutoUpdater {
             'auth_info',
             '*.session.json',
             '*.creds.json',
-            'backup_*'
+            'backup_*',
+            '.cyphers_update_*'
         ];
-        this.lastCommit = null;
+        this.fileHashes = new Map(); // Track all file hashes
         this.isUpdating = false;
-        this.currentVersion = '2.0.0';
-        this.updateLog = [];
+        this.isMonitoring = false;
+        this.lastCheckTime = null;
+        this.consecutiveFailures = 0;
         
-        console.log('\x1b[36m╔═══════════════════════════════════════════╗\x1b[0m');
-        console.log('\x1b[36m║           CYPHERS-v2 intime update        ║\x1b[0m');
-        console.log('\x1b[36m║      🔗 Name: cyphers-v2    ║\x1b[0m');
-        console.log('\x1b[36m║      ⏱️  by : cybercyphers😁             ║\x1b[0m');
-        console.log('\x1b[36m╚═══════════════════════════════════════════╝\x1b[0m');
+        console.log('\x1b[36m╔════════════════════════════════════════════════════╗\x1b[0m');
+        console.log('\x1b[36m║           🤖 REAL-TIME AUTO-UPDATER               ║\x1b[0m');
+        console.log(`\x1b[36m║      🔗 Repo: ${this.repo.padEnd(30)} ║\x1b[0m`);
+        console.log(`\x1b[36m║      ⚡ Check interval: ${this.checkInterval/1000}s         ║\x1b[0m`);
+        console.log('\x1b[36m╚════════════════════════════════════════════════════╝\x1b[0m');
+        
+        // Initialize file hashes
+        this.initializeFileHashes();
     }
     
-    start() {
-        console.log('\x1b[32m✅ Auto-updater started\x1b[0m');
+    async start() {
+        console.log('\x1b[32m🚀 Starting real-time auto-updater...\x1b[0m');
         
-        // Initial check after 5 seconds
-        setTimeout(() => {
-            this.checkForUpdates();
-        }, 5000);
+        // Initial sync
+        await this.fullSync();
         
-        // Start regular checks
-        setInterval(() => {
-            this.checkForUpdates();
-        }, this.checkInterval);
+        // Start monitoring
+        this.startMonitoring();
     }
     
-    async checkForUpdates() {
-        if (this.isUpdating) {
-            console.log('\x1b[33m⏳ Update in progress, skipping check...\x1b[0m');
-            return;
+    async initializeFileHashes() {
+        console.log('\x1b[36m📊 Building file hash database...\x1b[0m');
+        const allFiles = this.getAllFiles(__dirname);
+        let count = 0;
+        
+        for (const file of allFiles) {
+            const relativePath = path.relative(__dirname, file);
+            if (this.shouldIgnore(relativePath)) continue;
+            
+            try {
+                const hash = this.calculateFileHash(file);
+                this.fileHashes.set(relativePath, {
+                    hash,
+                    size: fs.statSync(file).size,
+                    mtime: fs.statSync(file).mtimeMs
+                });
+                count++;
+            } catch (error) {
+                // Skip files that can't be read
+            }
         }
         
-        try {
-            const latestCommit = await this.getLatestCommit();
-            
-            if (!this.lastCommit) {
-                this.lastCommit = latestCommit;
-                console.log(`\x1b[32m📌 Tracking commit: ${latestCommit.substring(0, 8)}\x1b[0m`);
+        console.log(`\x1b[32m✅ Tracked ${count} files\x1b[0m`);
+    }
+    
+    startMonitoring() {
+        if (this.isMonitoring) return;
+        
+        this.isMonitoring = true;
+        console.log('\x1b[36m🔍 Starting real-time monitoring...\x1b[0m');
+        
+        // Fast checking loop
+        const checkLoop = async () => {
+            if (this.isUpdating) {
+                setTimeout(checkLoop, 1000);
                 return;
             }
             
-            if (latestCommit !== this.lastCommit) {
-                console.log(`\x1b[36m🔄 New update detected!\x1b[0m`);
-                console.log(`\x1b[36m📥 Old: ${this.lastCommit.substring(0, 8)} → New: ${latestCommit.substring(0, 8)}\x1b[0m`);
+            try {
+                await this.quickCheck();
+            } catch (error) {
+                console.error('\x1b[33m⚠️ Quick check failed:\x1b[0m', error.message);
+                this.consecutiveFailures++;
                 
-                await this.performUpdate(latestCommit);
+                if (this.consecutiveFailures > 3) {
+                    console.log('\x1b[33m🔄 Too many failures, waiting 30 seconds...\x1b[0m');
+                    setTimeout(checkLoop, 30000);
+                    this.consecutiveFailures = 0;
+                    return;
+                }
             }
-        } catch (error) {
-            console.error('\x1b[31m❌ Update check failed:\x1b[0m', error.message);
+            
+            setTimeout(checkLoop, this.checkInterval);
+        };
+        
+        checkLoop();
+    }
+    
+    async quickCheck() {
+        const latestCommit = await this.getLatestCommit();
+        
+        if (!this.lastCommit) {
+            this.lastCommit = latestCommit;
+            return;
         }
+        
+        if (latestCommit !== this.lastCommit) {
+            console.log(`\x1b[36m⚡ Change detected! Commit: ${latestCommit.substring(0, 8)}\x1b[0m`);
+            await this.smartSync(latestCommit);
+        }
+    }
+    
+    async smartSync(newCommit) {
+        this.isUpdating = true;
+        const updateId = Date.now().toString().slice(-6);
+        
+        try {
+            console.log(`\x1b[36m╔════════════════════════════════════════════════════╗\x1b[0m`);
+            console.log(`\x1b[36m║           ⚡ SMART SYNC ${updateId}                ║\x1b[0m`);
+            console.log(`\x1b[36m║      Detected changes in commit                   ║\x1b[0m`);
+            console.log(`\x1b[36m║      ${newCommit.substring(0, 8)}...               ║\x1b[0m`);
+            console.log(`\x1b[36m╚════════════════════════════════════════════════════╝\x1b[0m`);
+            
+            // Step 1: Download only latest changes
+            const tempDir = await this.downloadUpdates();
+            
+            // Step 2: Precise byte-by-byte comparison
+            const changes = await this.preciseCompare(tempDir);
+            
+            if (changes.length === 0) {
+                console.log('\x1b[33m⚠️ No file changes detected\x1b[0m');
+                this.lastCommit = newCommit;
+                this.cleanupTemp(tempDir);
+                this.isUpdating = false;
+                return;
+            }
+            
+            // Step 3: Apply changes
+            await this.applyPreciseChanges(tempDir, changes);
+            
+            // Step 4: Update commit
+            this.lastCommit = newCommit;
+            
+            // Step 5: Notify
+            await this.notifyChanges(changes, newCommit, updateId);
+            
+            // Step 6: Cleanup
+            this.cleanupTemp(tempDir);
+            
+            console.log(`\x1b[32m✅ Sync ${updateId} completed: ${changes.length} files updated\x1b[0m`);
+            
+            // Restart bot
+            setTimeout(() => {
+                this.restartBot(updateId);
+            }, 2000);
+            
+        } catch (error) {
+            console.error(`\x1b[31m❌ Sync ${updateId} failed:\x1b[0m`, error.message);
+            await this.notifyFailure(error.message, updateId);
+            this.isUpdating = false;
+        }
+    }
+    
+    async fullSync() {
+        console.log('\x1b[36m🔄 Performing full repository sync...\x1b[0m');
+        
+        try {
+            const tempDir = await this.downloadUpdates();
+            const changes = await this.preciseCompare(tempDir);
+            
+            if (changes.length > 0) {
+                console.log(`\x1b[33m🔄 Found ${changes.length} outdated files, updating...\x1b[0m`);
+                await this.applyPreciseChanges(tempDir, changes);
+                await this.notifyChanges(changes, 'initial', 'INIT');
+            } else {
+                console.log('\x1b[32m✅ Already up to date\x1b[0m');
+            }
+            
+            // Get latest commit
+            this.lastCommit = await this.getLatestCommit();
+            console.log(`\x1b[32m📌 Now tracking commit: ${this.lastCommit.substring(0, 8)}\x1b[0m`);
+            
+            this.cleanupTemp(tempDir);
+            
+        } catch (error) {
+            console.error('\x1b[31m❌ Full sync failed:\x1b[0m', error.message);
+        }
+    }
+    
+    async preciseCompare(tempDir) {
+        const changes = [];
+        const repoFiles = this.getAllFiles(tempDir);
+        
+        // Track files that exist in repo
+        const repoFileSet = new Set();
+        
+        for (const repoFile of repoFiles) {
+            const relativePath = path.relative(tempDir, repoFile);
+            
+            // Skip ignored files
+            if (this.shouldIgnore(relativePath)) continue;
+            
+            repoFileSet.add(relativePath);
+            
+            const targetPath = path.join(__dirname, relativePath);
+            
+            // Calculate hash of repo file
+            let repoHash, repoSize;
+            try {
+                const repoContent = fs.readFileSync(repoFile);
+                repoHash = crypto.createHash('sha256').update(repoContent).digest('hex');
+                repoSize = repoContent.length;
+            } catch {
+                continue; // Skip if can't read
+            }
+            
+            // Check if file exists locally
+            if (fs.existsSync(targetPath)) {
+                try {
+                    const localContent = fs.readFileSync(targetPath);
+                    const localHash = crypto.createHash('sha256').update(localContent).digest('hex');
+                    const localSize = localContent.length;
+                    
+                    // Byte-perfect comparison
+                    if (repoHash !== localHash) {
+                        changes.push({
+                            file: relativePath,
+                            type: 'UPDATED',
+                            sizeDiff: repoSize - localSize,
+                            details: this.getChangeDetails(repoContent, localContent)
+                        });
+                    }
+                } catch {
+                    // If can't read local file, mark as updated
+                    changes.push({
+                        file: relativePath,
+                        type: 'UPDATED',
+                        sizeDiff: repoSize,
+                        details: 'Local file unreadable'
+                    });
+                }
+            } else {
+                // New file
+                changes.push({
+                    file: relativePath,
+                    type: 'NEW',
+                    size: repoSize
+                });
+            }
+        }
+        
+        // Check for deleted files (exist locally but not in repo)
+        const localFiles = this.getAllFiles(__dirname);
+        for (const localFile of localFiles) {
+            const relativePath = path.relative(__dirname, localFile);
+            
+            if (this.shouldIgnore(relativePath)) continue;
+            if (relativePath.startsWith('.cyphers_update_')) continue;
+            
+            if (!repoFileSet.has(relativePath)) {
+                // File exists locally but not in repo - mark for deletion
+                changes.push({
+                    file: relativePath,
+                    type: 'DELETED',
+                    size: fs.statSync(localFile).size
+                });
+            }
+        }
+        
+        return changes;
+    }
+    
+    getChangeDetails(newContent, oldContent) {
+        const newStr = newContent.toString();
+        const oldStr = oldContent.toString();
+        
+        if (newStr.length !== oldStr.length) {
+            return `Size changed: ${oldStr.length} → ${newStr.length} chars`;
+        }
+        
+        // Find first differing character
+        for (let i = 0; i < Math.min(newStr.length, oldStr.length); i++) {
+            if (newStr[i] !== oldStr[i]) {
+                const context = newStr.substring(Math.max(0, i - 20), Math.min(newStr.length, i + 20));
+                return `Char ${i} changed: '${oldStr[i]}' → '${newStr[i]}' [...${context}...]`;
+            }
+        }
+        
+        return 'Binary content changed';
+    }
+    
+    async applyPreciseChanges(tempDir, changes) {
+        let updated = 0;
+        let added = 0;
+        let deleted = 0;
+        
+        console.log('\x1b[36m⚡ Applying precise changes...\x1b[0m');
+        
+        for (const change of changes) {
+            const repoPath = path.join(tempDir, change.file);
+            const localPath = path.join(__dirname, change.file);
+            
+            try {
+                switch (change.type) {
+                    case 'UPDATED':
+                    case 'NEW':
+                        // Ensure directory exists
+                        const dir = path.dirname(localPath);
+                        if (!fs.existsSync(dir)) {
+                            fs.mkdirSync(dir, { recursive: true });
+                        }
+                        
+                        // Copy file with exact bytes
+                        const content = fs.readFileSync(repoPath);
+                        fs.writeFileSync(localPath, content);
+                        
+                        // Update hash cache
+                        const hash = crypto.createHash('sha256').update(content).digest('hex');
+                        this.fileHashes.set(change.file, {
+                            hash,
+                            size: content.length,
+                            mtime: Date.now()
+                        });
+                        
+                        if (change.type === 'UPDATED') updated++;
+                        else added++;
+                        
+                        console.log(`\x1b[33m   ${change.type === 'UPDATED' ? '↪' : '+'} ${change.file}\x1b[0m`);
+                        break;
+                        
+                    case 'DELETED':
+                        if (fs.existsSync(localPath)) {
+                            fs.unlinkSync(localPath);
+                            
+                            // Remove from hash cache
+                            this.fileHashes.delete(change.file);
+                            
+                            // Try to remove empty parent directories
+                            this.removeEmptyDirs(path.dirname(localPath));
+                            
+                            deleted++;
+                            console.log(`\x1b[31m   - ${change.file}\x1b[0m`);
+                        }
+                        break;
+                }
+            } catch (error) {
+                console.error(`\x1b[31m   ✗ Failed to ${change.type.toLowerCase()} ${change.file}:\x1b[0m`, error.message);
+            }
+        }
+        
+        console.log(`\x1b[32m   ✅ ${updated} updated, ${added} added, ${deleted} deleted\x1b[0m`);
+    }
+    
+    removeEmptyDirs(dir) {
+        if (dir === __dirname) return;
+        
+        try {
+            const files = fs.readdirSync(dir);
+            if (files.length === 0) {
+                fs.rmdirSync(dir);
+                this.removeEmptyDirs(path.dirname(dir));
+            }
+        } catch {
+            // Ignore errors
+        }
+    }
+    
+    async downloadUpdates() {
+        return new Promise((resolve, reject) => {
+            const tempDir = path.join(__dirname, '.cyphers_update_' + Date.now());
+            
+            // Remove old temp dir if exists
+            if (fs.existsSync(tempDir)) {
+                this.deleteFolderRecursive(tempDir);
+            }
+            
+            console.log('\x1b[36m📥 Downloading latest changes...\x1b[0m');
+            
+            // Use shallow clone for speed
+            const cmd = `git clone --depth 1 --branch ${this.branch} ${this.repoUrl} "${tempDir}"`;
+            
+            exec(cmd, { timeout: 45000 }, (error, stdout, stderr) => {
+                if (error) {
+                    console.error('\x1b[31m❌ Download failed:\x1b[0m', stderr);
+                    reject(new Error('Git clone failed: ' + stderr));
+                } else {
+                    console.log('\x1b[32m✅ Download complete\x1b[0m');
+                    resolve(tempDir);
+                }
+            });
+        });
     }
     
     async getLatestCommit() {
@@ -87,10 +415,10 @@ class AutoUpdater {
                 hostname: 'api.github.com',
                 path: `/repos/${this.repo}/commits/${this.branch}`,
                 headers: {
-                    'User-Agent': 'Cyphers-Bot-AutoUpdater',
+                    'User-Agent': 'Cyphers-RealTime-Updater',
                     'Accept': 'application/vnd.github.v3+json'
                 },
-                timeout: 10000
+                timeout: 8000
             };
             
             const req = https.get(options, (res) => {
@@ -122,129 +450,6 @@ class AutoUpdater {
         });
     }
     
-    async performUpdate(newCommit) {
-        this.isUpdating = true;
-        const updateId = Date.now();
-        
-        console.log(`\x1b[36m╔═══════════════════════════════════════════╗\x1b[0m`);
-        console.log(`\x1b[36m║           🚀 STARTING UPDATE         ║\x1b[0m`);
-        console.log(`\x1b[36m║        Update ID: ${updateId}            ║\x1b[0m`);
-        console.log(`\x1b[36m╚═══════════════════════════════════════════╝\x1b[0m`);
-        
-        try {
-            // Step 1: Download updates
-            const tempDir = await this.downloadUpdates();
-            
-            // Step 2: Compare and apply changes
-            const changes = await this.applyUpdates(tempDir);
-            
-            // Step 3: Update commit reference
-            this.lastCommit = newCommit;
-            
-            // Step 4: Notify success
-            await this.notifySuccess(changes, newCommit);
-            
-            // Step 5: Cleanup and restart
-            this.cleanupTemp(tempDir);
-            
-            console.log(`\x1b[32m✅ Update ${updateId} completed successfully!\x1b[0m`);
-            
-            // Wait 3 seconds then restart
-            setTimeout(() => {
-                this.restartBot(updateId);
-            }, 3000);
-            
-        } catch (error) {
-            console.error(`\x1b[31m❌ Update ${updateId} failed:\x1b[0m`, error.message);
-            await this.notifyFailure(error.message);
-            this.isUpdating = false;
-        }
-    }
-    
-    async downloadUpdates() {
-        return new Promise((resolve, reject) => {
-            const tempDir = path.join(__dirname, '.cyphers_update_' + Date.now());
-            
-            // Remove old temp dir if exists
-            if (fs.existsSync(tempDir)) {
-                this.deleteFolderRecursive(tempDir);
-            }
-            
-            console.log('\x1b[36m📥 Downloading latest code...\x1b[0m');
-            
-            const cmd = `git clone --depth 1 --branch ${this.branch} ${this.repoUrl} "${tempDir}"`;
-            
-            exec(cmd, { timeout: 60000 }, (error, stdout, stderr) => {
-                if (error) {
-                    console.error('\x1b[31m❌ Download failed:\x1b[0m', stderr);
-                    reject(new Error('Git clone failed'));
-                } else {
-                    console.log('\x1b[32m✅ Download complete\x1b[0m');
-                    resolve(tempDir);
-                }
-            });
-        });
-    }
-    
-    async applyUpdates(tempDir) {
-        const changes = [];
-        
-        // Get all files from temp dir
-        const allFiles = this.getAllFiles(tempDir);
-        
-        for (const file of allFiles) {
-            const relativePath = path.relative(tempDir, file);
-            
-            // Skip ignored files
-            if (this.shouldIgnore(relativePath)) continue;
-            
-            const targetPath = path.join(__dirname, relativePath);
-            
-            // Read new file content
-            const newContent = fs.readFileSync(file);
-            const newHash = crypto.createHash('md5').update(newContent).digest('hex');
-            
-            // Check if file exists locally
-            if (fs.existsSync(targetPath)) {
-                // Read existing file content
-                const oldContent = fs.readFileSync(targetPath);
-                const oldHash = crypto.createHash('md5').update(oldContent).digest('hex');
-                
-                if (newHash !== oldHash) {
-                    // Update file
-                    fs.writeFileSync(targetPath, newContent);
-                    changes.push({
-                        file: relativePath,
-                        type: 'UPDATED',
-                        size: newContent.length
-                    });
-                    console.log(`\x1b[33m   ↪ Updated: ${relativePath}\x1b[0m`);
-                }
-            } else {
-                // New file - create directory if needed
-                const dir = path.dirname(targetPath);
-                if (!fs.existsSync(dir)) {
-                    fs.mkdirSync(dir, { recursive: true });
-                }
-                
-                // Copy new file
-                fs.writeFileSync(targetPath, newContent);
-                changes.push({
-                    file: relativePath,
-                    type: 'NEW',
-                    size: newContent.length
-                });
-                console.log(`\x1b[32m   + Added: ${relativePath}\x1b[0m`);
-            }
-        }
-        
-        // Check for files that should be deleted (exist locally but not in repo)
-        // This is optional - comment out if you don't want to delete files
-        // await this.cleanupDeletedFiles(tempDir);
-        
-        return changes;
-    }
-    
     getAllFiles(dir, fileList = []) {
         try {
             const files = fs.readdirSync(dir);
@@ -254,18 +459,16 @@ class AutoUpdater {
                 const stat = fs.statSync(filePath);
                 
                 if (stat.isDirectory()) {
-                    // Skip ignored directories
                     if (!this.shouldIgnore(file)) {
                         this.getAllFiles(filePath, fileList);
                     }
                 } else {
-                    // Skip ignored files
                     if (!this.shouldIgnore(file)) {
                         fileList.push(filePath);
                     }
                 }
             }
-        } catch (error) {
+        } catch {
             // Skip errors
         }
         
@@ -275,44 +478,51 @@ class AutoUpdater {
     shouldIgnore(filePath) {
         return this.ignoredPatterns.some(pattern => {
             if (pattern.includes('*')) {
-                const regex = new RegExp(pattern.replace('*', '.*').replace(/\./g, '\\.'));
+                const regex = new RegExp(pattern.replace(/\*/g, '.*').replace(/\./g, '\\.'));
                 return regex.test(filePath);
             }
             return filePath.includes(pattern);
         });
     }
     
-    async notifySuccess(changes, commit) {
+    calculateFileHash(filePath) {
+        try {
+            const content = fs.readFileSync(filePath);
+            return crypto.createHash('sha256').update(content).digest('hex');
+        } catch {
+            return 'error';
+        }
+    }
+    
+    async notifyChanges(changes, commit, updateId) {
         if (!this.bot) {
             console.log('\x1b[33m⚠️ Bot not available for notifications\x1b[0m');
             return;
         }
         
         try {
-            const updateMessage = this.createSuccessMessage(changes, commit);
+            const message = this.createChangeMessage(changes, commit, updateId);
+            console.log('\x1b[36m📢 Change Notification:\x1b[0m');
+            console.log(message);
             
-            // Log to console
-            console.log('\x1b[36m📢 Update Summary:\x1b[0m');
-            console.log(updateMessage);
-            
-            // You can send to specific chats when bot is available
-            // Example: await this.bot.sendMessage('chat-id', { text: updateMessage });
+            // You can enable this to send WhatsApp notifications
+            // await this.bot.sendMessage('your-chat-id', { text: message });
             
         } catch (error) {
             console.error('\x1b[31m❌ Failed to create notification:\x1b[0m', error);
         }
     }
     
-    async notifyFailure(error) {
+    async notifyFailure(error, updateId) {
         if (!this.bot) return;
         
         try {
             const errorMessage = `❌ *Auto-Update Failed*\n\n` +
+                                `*Update ID:* ${updateId}\n` +
                                 `*Error:* ${error}\n` +
                                 `*Time:* ${new Date().toLocaleString()}\n\n` +
-                                `The bot will continue running with the current version.`;
+                                `Will retry in next check cycle.`;
             
-            // Log to console
             console.log('\x1b[31m📢 Update Failed:\x1b[0m');
             console.log(errorMessage);
             
@@ -321,29 +531,41 @@ class AutoUpdater {
         }
     }
     
-    createSuccessMessage(changes, commit) {
+    createChangeMessage(changes, commit, updateId) {
         const date = new Date().toLocaleString();
-        const updatedFiles = changes.filter(c => c.type === 'UPDATED').length;
-        const newFiles = changes.filter(c => c.type === 'NEW').length;
+        const updated = changes.filter(c => c.type === 'UPDATED').length;
+        const added = changes.filter(c => c.type === 'NEW').length;
+        const deleted = changes.filter(c => c.type === 'DELETED').length;
+        const shortCommit = commit.length > 8 ? commit.substring(0, 8) : commit;
         
-        let message = `🚀 *Cyphers Bot Auto-Updated!*\n\n`;
+        let message = `⚡ *REAL-TIME UPDATE ${updateId}*\n\n`;
         message += `📅 *Time:* ${date}\n`;
-        message += `🔧 *Commit:* ${commit.substring(0, 8)}\n`;
-        message += `📊 *Changes:* ${updatedFiles} updated, ${newFiles} new\n\n`;
+        message += `🔧 *Commit:* ${shortCommit}\n`;
+        message += `📊 *Changes:* ${updated} updated, ${added} added, ${deleted} deleted\n\n`;
         
         if (changes.length > 0) {
-            message += `📝 *Updated Files:*\n`;
-            changes.slice(0, 5).forEach(change => {
-                message += `• ${change.file} (${change.type})\n`;
+            message += `📝 *File Changes:*\n`;
+            changes.slice(0, 8).forEach(change => {
+                const icon = change.type === 'UPDATED' ? '↪' : 
+                            change.type === 'NEW' ? '+' : 
+                            change.type === 'DELETED' ? '-' : '?';
+                const name = change.file.length > 25 ? '...' + change.file.slice(-22) : change.file;
+                message += `${icon} ${name}\n`;
             });
             
-            if (changes.length > 5) {
-                message += `... and ${changes.length - 5} more\n`;
+            if (changes.length > 8) {
+                message += `... and ${changes.length - 8} more\n`;
             }
         }
         
-        message += `\n⚡ *Status:* Restarting in 3 seconds...\n`;
-        message += `✅ Update completed successfully!`;
+        // Add sample change details
+        const sampleChange = changes.find(c => c.type === 'UPDATED' && c.details);
+        if (sampleChange && sampleChange.details) {
+            message += `\n🔍 *Sample Change:*\n`;
+            message += `${sampleChange.details}\n`;
+        }
+        
+        message += `\n✅ *Status:* Updates applied, restarting...`;
         
         return message;
     }
@@ -372,7 +594,7 @@ class AutoUpdater {
             if (fs.existsSync(tempDir)) {
                 this.deleteFolderRecursive(tempDir);
             }
-        } catch (error) {
+        } catch {
             // Ignore cleanup errors
         }
     }
@@ -392,4 +614,4 @@ class AutoUpdater {
     }
 }
 
-module.exports = AutoUpdater;
+module.exports = RealTimeAutoUpdater;
