@@ -46,19 +46,6 @@ let plugins = {};
 let pluginWatchers = {};
 let loadedPlugins = new Set();
 
-// Track first-time users
-const firstTimeUsers = new Map();
-
-// Function to get phone number from JID
-function getPhoneFromJid(jid) {
-    if (!jid) return null;
-    const parts = jid.split('@');
-    if (parts[0].includes(':')) {
-        return parts[0].split(':')[0];
-    }
-    return parts[0];
-}
-
 // Enhanced plugin loader with hot reload
 function loadPlugins(reload = false) {
     const pluginsDir = path.join(__dirname, 'plugins');
@@ -204,7 +191,7 @@ async function cyphersStart() {
 
     if (usePairingCode && !cyphers.authState.creds.registered) {
         const phoneNumber = await question('Enter bot phone number 📱😏 : Example 62xxx\n');
-        const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERSS");
+        const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERS");
         console.log(`\x1b[1;33mPairing Code: ${code}\x1b[0m`);
     }
 
@@ -239,29 +226,6 @@ async function cyphersStart() {
             // Check if it's a DM (not a group)
             const isDM = !m.chat.endsWith('@g.us');
             
-            // Send welcome message for first-time DM users
-            if (isDM && !m.key.fromMe) {
-                const userId = m.sender;
-                if (!firstTimeUsers.has(userId)) {
-                    firstTimeUsers.set(userId, true);
-                    
-                    // Get bot's own phone number from credentials
-                    const botPhone = state.creds.me?.id?.split(':')[0] || state.creds.me?.id;
-                    
-                    const welcomeMessage = `👋 *Welcome to CYPHERS Bot!*\n\n` +
-                        `To avoid "waiting for message" warnings:\n` +
-                        `1. *Save this number* as a contact\n` +
-                        `2. Name it "CYPHERS Bot"\n` +
-                        `3. Messages will appear normally\n\n` +
-                        `📱 *Bot Number:* \`${botPhone}\`\n` +
-                        `⚙️ *Prefix:* ${prefix}\n\n` +
-                        `Type \`${prefix}help\` to see all commands!`;
-                    
-                    // Send welcome without quoting
-                    await cyphers.sendMessage(m.chat, { text: welcomeMessage });
-                }
-            }
-            
             if (messageText.startsWith(prefix)) {
                 const args = messageText.slice(prefix.length).trim().split(/ +/);
                 const commandName = args.shift().toLowerCase();
@@ -293,22 +257,20 @@ async function cyphersStart() {
                         
                     } catch (error) {
                         console.log(color(`Error in ${plugin.name}: ${error.message}`, 'red'));
-                        // Send error without quoting in DMs
-                        const sendOptions = isDM ? {} : { quoted: m };
+                        // Send error WITHOUT quoting
                         await cyphers.sendMessage(m.chat, { 
                             text: `❌ Error: ${error.message}` 
-                        }, sendOptions);
+                        });
                     }
                 } else {
                     const commandList = Object.values(plugins)
                         .map(p => `${prefix}${p.name} - ${p.description || 'No description'}`)
                         .join('\n');
                     
-                    // Send without quoting in DMs
-                    const sendOptions = isDM ? {} : { quoted: m };
+                    // Send WITHOUT quoting - this is the key change!
                     await cyphers.sendMessage(m.chat, { 
-                        text: `❓ Command not found!\n\n📋 Available Commands:\n${commandList || 'No commands loaded'}\n\n💡 Tip: Save my number to avoid "waiting" messages!` 
-                    }, sendOptions);
+                        text: `❓ Command not found!\n\n📋 Available Commands:\n${commandList || 'No commands loaded'}` 
+                    });
                 }
             }
         } catch (err) {
@@ -331,7 +293,7 @@ async function cyphersStart() {
         }
     });
     
-    // Only your channel
+    // Your channel - using the full JID format
     global.idch1 = "0029Vb7KKdB8V0toQKtI3n2j@newsletter";
 
     cyphers.public = global.status || true;
@@ -375,40 +337,25 @@ async function cyphersStart() {
             console.log('\x1b[32m═══════════════════════════════════════════════════\x1b[0m');
             
             // Try to follow your channel
-            try {
-                await cyphers.newsletterFollow(global.idch1);
-                console.log(color(`✅ Following your channel`, 'green'));
-            } catch (error) {
-                console.log(color(`⚠️ Could not follow channel: ${error.message}`, 'yellow'));
+            if (global.idch1) {
+                try {
+                    await cyphers.newsletterFollow(global.idch1);
+                    console.log(color(`✅ Following your channel`, 'green'));
+                } catch (error) {
+                    console.log(color(`⚠️ Could not follow channel: ${error.message}`, 'yellow'));
+                }
             }
         }
     });
 
-    // Override sendMessage to handle DMs better
-    const originalSendMessage = cyphers.sendMessage;
-    cyphers.sendMessage = async function(jid, content, options = {}) {
-        try {
-            // Remove quoted messages in DMs to avoid "waiting" issues
-            const isGroup = jid.endsWith('@g.us');
-            if (!isGroup && options.quoted) {
-                // Create new options without quoted
-                const { quoted, ...otherOptions } = options;
-                return await originalSendMessage.call(this, jid, content, otherOptions);
-            }
-            return await originalSendMessage.call(this, jid, content, options);
-        } catch (error) {
-            console.log(color(`Send message error: ${error.message}`, 'red'));
-            throw error;
-        }
-    };
-
+    // Send text helper - NEVER use quoted in DMs
     cyphers.sendText = (jid, text, quoted = '', options) => {
         const isGroup = jid.endsWith('@g.us');
-        const sendOptions = isGroup ? { quoted, ...options } : { ...options };
+        const sendOptions = isGroup && quoted ? { quoted, ...options } : { ...options };
         return cyphers.sendMessage(jid, { text: text, ...sendOptions });
     };
     
-    // Helper method for plugins to use
+    // Helper method for plugins to use - IMPORTANT: No quoting in DMs
     cyphers.reply = async (jid, text, quotedMessage = null, options = {}) => {
         const isGroup = jid.endsWith('@g.us');
         const sendOptions = isGroup && quotedMessage ? { quoted: quotedMessage, ...options } : options;
@@ -424,6 +371,21 @@ async function cyphersStart() {
             buffer = Buffer.concat([buffer, chunk]);
         }
         return buffer;
+    };
+    
+    // CRITICAL: Override sendMessage to remove quoting in ALL cases (for this bot)
+    const originalSendMessage = cyphers.sendMessage;
+    cyphers.sendMessage = async function(jid, content, options = {}) {
+        try {
+            // REMOVE QUOTED OPTION COMPLETELY - never quote in any chat
+            if (options.quoted) {
+                delete options.quoted;
+            }
+            return await originalSendMessage.call(this, jid, content, options);
+        } catch (error) {
+            console.log(color(`Send message error: ${error.message}`, 'red'));
+            throw error;
+        }
     };
     
     cyphers.ev.on('creds.update', saveCreds);
