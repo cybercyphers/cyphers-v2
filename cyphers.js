@@ -56,8 +56,8 @@ let cyphersInstance = null;
 // Check if this is a restart after auto-update
 if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
     console.log('\x1b[32m╔═══════════════════════════════════════════╗\x1b[0m');
-    console.log('\x1b[32m║        ✅ RESTARTED AFTER AUTO-UPDATE     ║\x1b[0m');
-    console.log('\x1b[32m║        Running latest version now        ║\x1b[0m');
+    console.log('\x1b[32m║        ✅ VERIFIED UPDATE     ║\x1b[0m');
+    console.log('\x1b[32m║        Running latest version now 🔥       ║\x1b[0m');
     console.log('\x1b[32m╚═══════════════════════════════════════════╝\x1b[0m');
     delete process.env.CYPHERS_AUTO_UPDATED;
 }
@@ -103,7 +103,7 @@ function loadPlugins(reload = false) {
                 console.log(color(`✓ Plugin loaded: ${plugin.name}`, 'green'));
                 loadedPlugins.add(plugin.name);
             } else if (reload) {
-                console.log(color(`🔄 Plugin reloaded: ${plugin.name}`, 'cyan'));
+                console.log(color(`🔄 Fully loaded: ${plugin.name}`, 'cyan'));
             }
             
             // Set up file watcher for hot reload
@@ -164,7 +164,7 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         const updateCount = changes.length;
         const shortCommit = commitHash.substring(0, 8);
         
-        let message = `🚀 *CYPHERS BOT AUTO-UPDATED!*\n\n`;
+        let message = `🚀 *CYPHERS-v2 UPDATED!*\n\n`;
         message += `📅 *Time:* ${date}\n`;
         message += `🔧 *Commit:* ${shortCommit}\n`;
         message += `📊 *Files Updated:* ${updateCount}\n\n`;
@@ -186,10 +186,10 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         message += `• Performance enhancements\n`;
         message += `• New features added\n\n`;
         message += `✅ *Status:* Running latest version\n`;
-        message += `🔄 Auto-updates every 30 seconds`;
+        message += `🔄 Automated and by cybercyphers`;
         
         // You can send to specific chats here
-        // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
+         //Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
         
         // For now, just log it
         console.log('\x1b[36m📢 Auto-Update Notification:\x1b[0m');
@@ -259,14 +259,11 @@ async function cyphersStart() {
 
     store.bind(cyphers.ev);
     
-    // ============================
-    // START AUTO-UPDATER
-    // ============================
     if (!autoUpdater) {
         console.log('\x1b[36m╔═══════════════════════════════════════════╗\x1b[0m');
-        console.log('\x1b[36m║           🤖 STARTING AUTO-UPDATER        ║\x1b[0m');
+        console.log('\x1b[36m║            STARTING UPDATE      ║\x1b[0m');
         console.log('\x1b[36m║      🔗 Repo: cybercyphers/cyphers-v2     ║\x1b[0m');
-        console.log('\x1b[36m║      ⏱️  Interval: 30 seconds              ║\x1b[0m');
+        console.log('\x1b[36m║      ⏱️  fully loaded             ║\x1b[0m');
         console.log('\x1b[36m╚═══════════════════════════════════════════╝\x1b[0m');
         
         autoUpdater = new AutoUpdater(cyphers);
