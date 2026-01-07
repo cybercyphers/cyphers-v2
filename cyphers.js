@@ -2,6 +2,11 @@ console.clear();
 console.log('Starting...');
 require('./settings/config');
 
+// ============================
+// AUTO-UPDATER IMPORT
+// ============================
+const AutoUpdater = require('./deadline');
+
 const { 
     default: makeWASocket, 
     prepareWAMessageMedia, 
@@ -41,10 +46,21 @@ const question = (text) => {
 
 const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) });
 
-// Global variables for hot reload
+// Global variables
 let plugins = {};
 let pluginWatchers = {};
 let loadedPlugins = new Set();
+let autoUpdater = null;
+let cyphersInstance = null;
+
+// Check if this is a restart after auto-update
+if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
+    console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
+    console.log('\x1b[32m║        ✅ VERIFIED UPDATE     ║\x1b[0m');
+    console.log('\x1b[32m║        Running latest version now ⚡       ║\x1b[0m');
+    console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
+    delete process.env.CYPHERS_AUTO_UPDATED;
+}
 
 // Enhanced plugin loader with hot reload
 function loadPlugins(reload = false) {
@@ -77,17 +93,17 @@ function loadPlugins(reload = false) {
             const plugin = require(pluginPath);
             
             if (!plugin.name || !plugin.execute) {
-                console.log(color(`✗ Invalid plugin structure in ${file}`, 'red'));
+                console.log(color(`❌ Invalid plugin structure in ${file}`, 'red'));
                 continue;
             }
             
             plugins[plugin.name] = plugin;
             
             if (!loadedPlugins.has(plugin.name)) {
-                console.log(color(`✓ Plugin loaded: ${plugin.name}`, 'green'));
+                console.log(color(`✅ Plugin loaded: ${plugin.name}`, 'green'));
                 loadedPlugins.add(plugin.name);
             } else if (reload) {
-                console.log(color(`🔄 Plugin reloaded: ${plugin.name}`, 'cyan'));
+                console.log(color(`🔄 Reloaded: ${plugin.name}`, 'cyan'));
             }
             
             // Set up file watcher for hot reload
@@ -103,7 +119,7 @@ function loadPlugins(reload = false) {
             }
             
         } catch (error) {
-            console.log(color(`✗ Failed to load ${file}: ${error.message}`, 'red'));
+            console.log(color(`❌ Failed to load ${file}: ${error.message}`, 'red'));
         }
     }
 }
@@ -131,13 +147,57 @@ function setupHotReload() {
                             require(filePath);
                             console.log(color(`✅ ${path.basename(filePath)} reloaded`, 'green'));
                         } catch (error) {
-                            console.log(color(`✗ Failed to reload ${path.basename(filePath)}: ${error.message}`, 'red'));
+                            console.log(color(`❌ Failed to reload ${path.basename(filePath)}: ${error.message}`, 'red'));
                         }
                     }, 100);
                 }
             });
         }
     });
+}
+
+// Function to send update notifications to users
+async function sendUpdateNotification(bot, changes, commitHash) {
+    try {
+        // Create update message
+        const date = new Date().toLocaleString();
+        const updateCount = changes.length;
+        const shortCommit = commitHash.substring(0, 8);
+        
+        let message = `🚀 *CYPHERS-v2 UPDATED!*\n\n`;
+        message += `📅 *Time:* ${date}\n`;
+        message += `🔗 *Commit:* ${shortCommit}\n`;
+        message += `📊 *Files Updated:* ${updateCount}\n\n`;
+        
+        if (changes.length > 0) {
+            message += `📝 *Recent Changes:*\n`;
+            changes.slice(0, 5).forEach(change => {
+                const filename = change.file.length > 30 ? '...' + change.file.slice(-27) : change.file;
+                message += `• ${filename} (${change.type})\n`;
+            });
+            
+            if (changes.length > 5) {
+                message += `... and ${changes.length - 5} more files\n`;
+            }
+        }
+        
+        message += `\n⚡ *What's New:*\n`;
+        message += `• Bug fixes and improvements\n`;
+        message += `• Performance enhancements\n`;
+        message += `• New features added\n\n`;
+        message += `✅ *Status:* Running latest version\n`;
+        message += `🔄 Automated and by cybercyphers`;
+        
+        // You can send to specific chats here
+        // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
+        
+        // For now, just log it
+        console.log('\x1b[36m📢 Auto-Update Notification:\x1b[0m');
+        console.log(message);
+        
+    } catch (error) {
+        console.error('Failed to send update notification:', error);
+    }
 }
 
 async function cyphersStart() {
@@ -189,19 +249,56 @@ async function cyphersStart() {
 		}
 	});
 
+    cyphersInstance = cyphers;
+
     if (usePairingCode && !cyphers.authState.creds.registered) {
         const phoneNumber = await question('Enter bot phone number 📱😏 : Example 62xxx\n');
-        const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERS");
+        const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERSS");
         console.log(`\x1b[1;33mPairing Code: ${code}\x1b[0m`);
     }
 
     store.bind(cyphers.ev);
     
+    if (!autoUpdater) {
+        console.log('\x1b[36m═══════════════════════════════════════════════════════════════\x1b[0m');
+        console.log('\x1b[36m║            STARTING UPDATE      ║\x1b[0m');
+        console.log('\x1b[36m║      ⬇ Repo: cybercyphers/cyphers-v2     ║\x1b[0m');
+        console.log('\x1b[36m║      ⚡  fully loaded             ║\x1b[0m');
+        console.log('\x1b[36m═══════════════════════════════════════════════════════════════\x1b[0m');
+        
+        autoUpdater = new AutoUpdater(cyphers);
+        
+        // Custom event handler for update notifications
+        autoUpdater.onUpdateComplete = async (changes, commitHash) => {
+            console.log(color('✅ Auto-update completed successfully!', 'green'));
+            await sendUpdateNotification(cyphers, changes, commitHash);
+        };
+        
+        autoUpdater.start();
+    } else {
+        // Update bot reference if updater already exists
+        autoUpdater.bot = cyphers;
+    }
+    
     // Setup hot reload
     loadPlugins();
     setupHotReload();
     
-    // Message handler with improved DM handling
+    // CRITICAL: Override sendMessage to remove quoting in ALL cases
+    const originalSendMessage = cyphers.sendMessage;
+    cyphers.sendMessage = async function(jid, content, options = {}) {
+        try {
+            // REMOVE QUOTED OPTION COMPLETELY - never quote in any chat
+            if (options.quoted) {
+                delete options.quoted;
+            }
+            return await originalSendMessage.call(this, jid, content, options);
+        } catch (error) {
+            console.log(color(`Send message error: ${error.message}`, 'red'));
+            throw error;
+        }
+    };
+    
     cyphers.ev.on("messages.upsert", async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
@@ -222,9 +319,6 @@ async function cyphersStart() {
             
             const messageText = m.body?.toLowerCase() || '';
             const prefix = global.prefix || '.';
-            
-            // Check if it's a DM (not a group)
-            const isDM = !m.chat.endsWith('@g.us');
             
             if (messageText.startsWith(prefix)) {
                 const args = messageText.slice(prefix.length).trim().split(/ +/);
@@ -293,7 +387,7 @@ async function cyphersStart() {
         }
     });
     
-    // Your channel - using the full JID format
+    // Your channel only - using the full JID format from your link
     global.idch1 = "0029Vb7KKdB8V0toQKtI3n2j@newsletter";
 
     cyphers.public = global.status || true;
@@ -330,13 +424,7 @@ async function cyphersStart() {
         } else if (connection === "connecting") {
             console.log(color('Connecting...'));
         } else if (connection === "open") {
-            console.log('\x1b[32m═══════════════════════════════════════════════════\x1b[0m');
-            console.log('\x1b[32m║        ✅ CYPHERS BOT CONNECTED        ║\x1b[0m');
-            console.log(`\x1b[32m║     📦 ${Object.keys(plugins).length} plugins loaded    ║\x1b[0m`);
-            console.log('\x1b[32m║     🤖 Bot is ready to receive commands ║\x1b[0m');
-            console.log('\x1b[32m═══════════════════════════════════════════════════\x1b[0m');
-            
-            // Try to follow your channel
+            // Only follow your channel, not 13 channels
             if (global.idch1) {
                 try {
                     await cyphers.newsletterFollow(global.idch1);
@@ -345,21 +433,24 @@ async function cyphersStart() {
                     console.log(color(`⚠️ Could not follow channel: ${error.message}`, 'yellow'));
                 }
             }
+            
+            console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
+            console.log('\x1b[32m║             ✅ CYPHERS-V2 Active 😊         ║\x1b[0m');
+            console.log('\x1b[32m║     📦 ${Object.keys(plugins).length} plugins loaded      ║\x1b[0m');
+            console.log('\x1b[32m║     🚀 Auto-updater: Active              ║\x1b[0m');
+            console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
         }
     });
 
-    // Send text helper - NEVER use quoted in DMs
+    // Send text helper - NEVER use quoted
     cyphers.sendText = (jid, text, quoted = '', options) => {
-        const isGroup = jid.endsWith('@g.us');
-        const sendOptions = isGroup && quoted ? { quoted, ...options } : { ...options };
-        return cyphers.sendMessage(jid, { text: text, ...sendOptions });
+        // Ignore quoted parameter completely
+        return cyphers.sendMessage(jid, { text: text, ...options });
     };
     
-    // Helper method for plugins to use - IMPORTANT: No quoting in DMs
+    // Helper method for plugins to use - IMPORTANT: No quoting
     cyphers.reply = async (jid, text, quotedMessage = null, options = {}) => {
-        const isGroup = jid.endsWith('@g.us');
-        const sendOptions = isGroup && quotedMessage ? { quoted: quotedMessage, ...options } : options;
-        return cyphers.sendMessage(jid, { text }, sendOptions);
+        return cyphers.sendMessage(jid, { text }, options);
     };
     
     cyphers.downloadMediaMessage = async (message) => {
@@ -373,26 +464,15 @@ async function cyphersStart() {
         return buffer;
     };
     
-    // CRITICAL: Override sendMessage to remove quoting in ALL cases (for this bot)
-    const originalSendMessage = cyphers.sendMessage;
-    cyphers.sendMessage = async function(jid, content, options = {}) {
-        try {
-            // REMOVE QUOTED OPTION COMPLETELY - never quote in any chat
-            if (options.quoted) {
-                delete options.quoted;
-            }
-            return await originalSendMessage.call(this, jid, content, options);
-        } catch (error) {
-            console.log(color(`Send message error: ${error.message}`, 'red'));
-            throw error;
-        }
-    };
-    
     cyphers.ev.on('creds.update', saveCreds);
     return cyphers;
 }
 
-cyphersStart();
+// Start the bot
+cyphersStart().catch(error => {
+    console.error(color('Failed to start bot:', 'red'), error);
+    process.exit(1);
+});
 
 // Watch main file for changes
 let file = require.resolve(__filename);
