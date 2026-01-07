@@ -260,7 +260,7 @@ async function cyphersStart() {
 	const cyphers = makeWASocket({
 		printQRInTerminal: !usePairingCode,
 		syncFullHistory: false,
-		markOnlineOnConnect: false,
+		markOnlineOnConnect: true, // Changed to true - this helps with message sync
 		connectTimeoutMs: 60000,
 		defaultQueryTimeoutMs: 0,
 		keepAliveIntervalMs: 10000,
@@ -404,6 +404,9 @@ async function cyphersStart() {
             const prefix = global.prefix || '.';
             
             if (messageText.startsWith(prefix)) {
+                // IMMEDIATELY send a typing indicator to prevent "Waiting for message"
+                await cyphers.sendPresenceUpdate('composing', chatJid);
+                
                 // Add extra delay for groups if command is heavy
                 if (isGroup) {
                     const heavyCommands = ['image', 'video', 'sticker', 'download'];
@@ -464,6 +467,9 @@ async function cyphersStart() {
                         text: `❓ Command not found!\n\n📋 ${isGroup ? 'Quick ' : ''}Commands:\n${commandText || 'No commands loaded'}\n\n${isGroup ? 'Type .help for full list' : ''}` 
                     }, { quoted: m });
                 }
+                
+                // Stop typing indicator
+                await cyphers.sendPresenceUpdate('paused', chatJid);
             }
         } catch (err) {
             console.log(color(`Message error: ${err}`, 'red'));
