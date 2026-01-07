@@ -103,17 +103,26 @@ function loadPlugins(reload = false) {
                 console.log(color(`✓ Plugin loaded: ${plugin.name}`, 'green'));
                 loadedPlugins.add(plugin.name);
             } else if (reload) {
-                console.log(color(`🔄 Reloaded: ${plugin.name}`, 'cyan'));
+                console.log(color(`🔄 Fully reloaded: ${plugin.name}`, 'cyan'));
             }
             
-            // Set up file watcher for hot reload
-            if (!pluginWatchers[file]) {
-                pluginWatchers[file] = fs.watch(pluginPath, (eventType) => {
+            // Set up file watcher for hot reload (only if not already watching)
+            if (!pluginWatchers[pluginPath]) {
+                pluginWatchers[pluginPath] = fs.watch(pluginPath, (eventType) => {
                     if (eventType === 'change') {
-                        setTimeout(() => {
-                            console.log(color(`🔄 ${file} changed, reloading...`, 'yellow'));
-                            loadPlugins(true);
-                        }, 100);
+                        console.log(color(`🔄 ${file} changed, reloading immediately...`, 'yellow'));
+                        // Immediate reload without delay
+                        try {
+                            delete require.cache[require.resolve(pluginPath)];
+                            const updatedPlugin = require(pluginPath);
+                            
+                            if (updatedPlugin.name && updatedPlugin.execute) {
+                                plugins[updatedPlugin.name] = updatedPlugin;
+                                console.log(color(`✅ ${updatedPlugin.name} reloaded successfully`, 'green'));
+                            }
+                        } catch (error) {
+                            console.log(color(`✗ Failed to reload ${file}: ${error.message}`, 'red'));
+                        }
                     }
                 });
             }
@@ -124,36 +133,106 @@ function loadPlugins(reload = false) {
     }
 }
 
-// Hot reload for config and lib files
+// Enhanced hot reload for config and all library files
 function setupHotReload() {
-    const filesToWatch = [
-        path.join(__dirname, './settings/config.js'),
-        path.join(__dirname, './lib/color.js'),
-        path.join(__dirname, './lib/myfunction.js')
+    const directoriesToWatch = [
+        path.join(__dirname, './settings'),
+        path.join(__dirname, './lib'),
+        path.join(__dirname, './plugins')
     ];
     
-    filesToWatch.forEach(filePath => {
-        if (fs.existsSync(filePath)) {
-            fs.watch(filePath, (eventType) => {
-                if (eventType === 'change') {
-                    setTimeout(() => {
-                        console.log(color(`🔄 ${path.basename(filePath)} changed, reloading...`, 'yellow'));
+    const fileWatchers = new Map();
+    
+    function watchDirectory(dirPath) {
+        if (!fs.existsSync(dirPath)) return;
+        
+        // Watch for new files
+        fs.watch(dirPath, { recursive: true }, (eventType, filename) => {
+            if (!filename) return;
+            
+            const fullPath = path.join(dirPath, filename);
+            
+            // Only handle JavaScript files
+            if (!filename.endsWith('.js') && !filename.endsWith('.cjs')) return;
+            
+            if (eventType === 'change') {
+                // File changed - reload immediately
+                setTimeout(() => {
+                    try {
+                        delete require.cache[require.resolve(fullPath)];
+                        require(fullPath);
+                        console.log(color(`✅ ${filename} reloaded immediately`, 'green'));
                         
-                        // Clear require cache
-                        delete require.cache[require.resolve(filePath)];
-                        
-                        // Reload the file
-                        try {
-                            require(filePath);
-                            console.log(color(`✅ ${path.basename(filePath)} reloaded`, 'green'));
-                        } catch (error) {
-                            console.log(color(`✗ Failed to reload ${path.basename(filePath)}: ${error.message}`, 'red'));
+                        // If it's a plugin, update plugins list
+                        if (dirPath.includes('plugins')) {
+                            loadPlugins(true);
                         }
-                    }, 100);
-                }
-            });
-        }
-    });
+                    } catch (error) {
+                        console.log(color(`✗ Failed to reload ${filename}: ${error.message}`, 'red'));
+                    }
+                }, 50);
+            } else if (eventType === 'rename') {
+                // File added or removed
+                setTimeout(() => {
+                    if (fs.existsSync(fullPath)) {
+                        // New file added
+                        console.log(color(`📁 New file detected: ${filename}`, 'cyan'));
+                        if (dirPath.includes('plugins')) {
+                            loadPlugins(true);
+                        } else {
+                            try {
+                                require(fullPath);
+                                console.log(color(`✅ ${filename} loaded`, 'green'));
+                            } catch (error) {
+                                console.log(color(`✗ Failed to load ${filename}: ${error.message}`, 'red'));
+                            }
+                        }
+                    } else {
+                        // File removed
+                        console.log(color(`🗑️ File removed: ${filename}`, 'yellow'));
+                        if (dirPath.includes('plugins')) {
+                            loadPlugins(true);
+                        }
+                    }
+                }, 100);
+            }
+        });
+    }
+    
+    // Watch all directories
+    directoriesToWatch.forEach(dir => watchDirectory(dir));
+    
+    // Also watch config.js specifically for immediate changes
+    const configPath = path.join(__dirname, './settings/config.js');
+    if (fs.existsSync(configPath)) {
+        fs.watch(configPath, (eventType) => {
+            if (eventType === 'change') {
+                console.log(color('🔄 config.js changed, reloading immediately...', 'yellow'));
+                setTimeout(() => {
+                    try {
+                        delete require.cache[require.resolve(configPath)];
+                        require(configPath);
+                        console.log(color('✅ config.js reloaded successfully', 'green'));
+                        
+                        // Update global variables from config
+                        if (global.prefix) {
+                            console.log(color(`🔄 Prefix updated to: ${global.prefix}`, 'cyan'));
+                        }
+                        if (global.status !== undefined) {
+                            if (cyphersInstance) {
+                                cyphersInstance.public = global.status || false;
+                                console.log(color(`🔄 Bot mode updated: ${cyphersInstance.public ? 'Public' : 'Private'}`, 'cyan'));
+                            }
+                        }
+                    } catch (error) {
+                        console.log(color(`✗ Failed to reload config.js: ${error.message}`, 'red'));
+                    }
+                }, 50);
+            }
+        });
+    }
+    
+    console.log(color('🔥 Hot reload enabled for all files', 'green'));
 }
 
 // Function to send update notifications to users
@@ -280,7 +359,7 @@ async function cyphersStart() {
         autoUpdater.bot = cyphers;
     }
     
-    // Setup hot reload
+    // Setup enhanced hot reload
     loadPlugins();
     setupHotReload();
     
@@ -310,7 +389,7 @@ async function cyphersStart() {
                 const commandName = args.shift().toLowerCase();
                 const quoted = m.quoted || null;
                 
-                // Get latest plugins
+                // Get latest plugins (always fresh due to hot reload)
                 const plugin = Object.values(plugins).find(p => 
                     p.name.toLowerCase() === commandName
                 );
@@ -370,13 +449,9 @@ async function cyphersStart() {
         }
     });
     
-    // Replace with your actual channel URLs
-    // Example format: https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j
-    global.channels = [
-        "https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j", // Replace with your actual channel
-        "https://whatsapp.com/channel/0029VaABCdefGHIjklMnOpQr", // Add more channels as needed
-        "https://whatsapp.com/channel/0029VxYZabcdEFghIJklMnoP"
-    ];
+    // Channel IDs (Your two channels only)
+    global.idch1  = "https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j"
+    global.idch2  = "https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j"
 
     cyphers.public = global.status || true;
 
@@ -412,19 +487,28 @@ async function cyphersStart() {
         } else if (connection === "connecting") {
             console.log(color('Connecting...'));
         } else if (connection === "open") {
+            // Only subscribe to your two channels
+            try {
+                await cyphers.newsletterFollow("https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j");
+                console.log(color(`✅ Subscribed to Channel 1`, 'green'));
+            } catch (error) {
+                console.log(color(`✗ Failed Channel 1: ${error.message}`, 'yellow'));
+            }
+            
+            try {
+                await cyphers.newsletterFollow("https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j");
+                console.log(color(`✅ Subscribed to Channel 2`, 'green'));
+            } catch (error) {
+                console.log(color(`✗ Failed Channel 2: ${error.message}`, 'yellow'));
+            }
+            
             console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
             console.log('\x1b[32m│             ✅ CYPHERS-V2 Active 😊                     │\x1b[0m');
-            console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded                        │\x1b[0m`);
-            console.log('\x1b[32m│     🚀 Auto-updater: Active                          │\x1b[0m');
-            console.log('\x1b[32m│     📢 Official Channel:                             │\x1b[0m');
-            console.log('\x1b[32m│     https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j │\x1b[0m');
+            console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded      │\x1b[0m`);
+            console.log('\x1b[32m│     🚀 Auto-updater: Active                            │\x1b[0m');
+            console.log('\x1b[32m│     🔥 Hot reload: Enabled                             │\x1b[0m');
+            console.log('\x1b[32m│     📢 Subscribed to 2 channels                        │\x1b[0m');
             console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
-            
-            // Display channel links (no newsletterFollow function in current baileys)
-            console.log(color('📢 Follow these channels:', 'cyan'));
-            global.channels.forEach((channel, index) => {
-                console.log(color(`  ${index + 1}. ${channel}`, 'yellow'));
-            });
         }
     });
 
