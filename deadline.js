@@ -351,16 +351,13 @@ class SilentAutoUpdater {
     }
     
     restartSilently() {
-        const child = spawn(process.argv[0], process.argv.slice(1), {
-            stdio: 'inherit',
-            detached: true,
-            env: { ...process.env, CYPHERS_AUTO_UPDATED: 'true' }
-        });
+        console.log('🔄 Auto-Updater: Restarting...');
         
-        child.unref();
-        
+        // SIMPLE FIX: Just exit and let external process manager restart
+        // This works for containers, PM2, Docker, Railway, etc.
+        // Exit with code 1 so process managers know to restart
         setTimeout(() => {
-            process.exit(0);
+            process.exit(1);
         }, 500);
     }
     
