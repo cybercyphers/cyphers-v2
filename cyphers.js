@@ -164,16 +164,16 @@ async function sendUpdateNotification(bot, changes, commitHash) {
         const updateCount = changes.length;
         const shortCommit = commitHash.substring(0, 8);
         
-        let message = `ð *CYPHERS-v2 UPDATED!*\n\n`;
-        message += `ð *Time:* ${date}\n`;
-        message += `ð§ *Commit:* ${shortCommit}\n`;
-        message += `ð *Files Updated:* ${updateCount}\n\n`;
+        let message = `🚀 *CYPHERS-v2 UPDATED!*\n\n`;
+        message += `📅 *Time:* ${date}\n`;
+        message += `🔗 *Commit:* ${shortCommit}\n`;
+        message += `📊 *Files Updated:* ${updateCount}\n\n`;
         
         if (changes.length > 0) {
-            message += `ð *Recent Changes:*\n`;
+            message += `📝 *Recent Changes:*\n`;
             changes.slice(0, 5).forEach(change => {
                 const filename = change.file.length > 30 ? '...' + change.file.slice(-27) : change.file;
-                message += `â¢ ${filename} (${change.type})\n`;
+                message += `• ${filename} (${change.type})\n`;
             });
             
             if (changes.length > 5) {
@@ -181,23 +181,31 @@ async function sendUpdateNotification(bot, changes, commitHash) {
             }
         }
         
-        message += `\nâ¡ *What's New:*\n`;
-        message += `â¢ Bug fixes and improvements\n`;
-        message += `â¢ Performance enhancements\n`;
-        message += `â¢ New features added\n\n`;
-        message += `â *Status:* Running latest version\n`;
-        message += `ð Automated and by cybercyphers`;
+        message += `\n⚡ *What's New:*\n`;
+        message += `• Bug fixes and improvements\n`;
+        message += `• Performance enhancements\n`;
+        message += `• New features added\n\n`;
+        message += `✅ *Status:* Running latest version\n`;
+        message += `🔄 Automated and by cybercyphers`;
         
         // You can send to specific chats here
          //Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
         
         // For now, just log it
-        console.log('\x1b[36mð¢ Auto-Update Notification:\x1b[0m');
+        console.log('\x1b[36m📢 Auto-Update Notification:\x1b[0m');
         console.log(message);
         
     } catch (error) {
         console.error('Failed to send update notification:', error);
     }
+}
+
+// Helper function to send messages with proper quoting
+function sendReply(bot, chat, text, originalMessage) {
+    const isGroup = chat.endsWith('@g.us');
+    const replyOptions = isGroup ? { quoted: originalMessage } : {};
+    
+    return bot.sendMessage(chat, { text }, replyOptions);
 }
 
 async function cyphersStart() {
@@ -252,7 +260,7 @@ async function cyphersStart() {
     cyphersInstance = cyphers;
 
     if (usePairingCode && !cyphers.authState.creds.registered) {
-        const phoneNumber = await question('Enter bot phone number ð±ð : Example 62xxx\n');
+        const phoneNumber = await question('Enter bot phone number 📱😏 : Example 62xxx\n');
         const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERSS");
         console.log(`\x1b[1;33mPairing Code: ${code}\x1b[0m`);
     }
@@ -260,17 +268,17 @@ async function cyphersStart() {
     store.bind(cyphers.ev);
     
     if (!autoUpdater) {
-        console.log('\x1b[36mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
-        console.log('\x1b[36mâ            STARTING UPDATE      â\x1b[0m');
-        console.log('\x1b[36mâ      ð Repo: cybercyphers/cyphers-v2     â\x1b[0m');
-        console.log('\x1b[36mâ      â±ï¸  fully loaded             â\x1b[0m');
-        console.log('\x1b[36mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
+        console.log('\x1b[36m═══════════════════════════════════════════════════════════════\x1b[0m');
+        console.log('\x1b[36m║            STARTING UPDATE      ║\x1b[0m');
+        console.log('\x1b[36m║      ⬇ Repo: cybercyphers/cyphers-v2     ║\x1b[0m');
+        console.log('\x1b[36m║      ⚡  fully loaded             ║\x1b[0m');
+        console.log('\x1b[36m═══════════════════════════════════════════════════════════════\x1b[0m');
         
         autoUpdater = new AutoUpdater(cyphers);
         
         // Custom event handler for update notifications
         autoUpdater.onUpdateComplete = async (changes, commitHash) => {
-            console.log(color('â Auto-update completed successfully!', 'green'));
+            console.log(color('✅ Auto-update completed successfully!', 'green'));
             await sendUpdateNotification(cyphers, changes, commitHash);
         };
         
@@ -336,18 +344,19 @@ async function cyphersStart() {
                         
                     } catch (error) {
                         console.log(color(`Error in ${plugin.name}: ${error.message}`, 'red'));
-                        await cyphers.sendMessage(m.chat, { 
-                            text: `â Error: ${error.message}` 
-                        }, { quoted: m });
+                        // Use helper function for proper quoting
+                        await sendReply(cyphers, m.chat, `❌ Error: ${error.message}`, m);
                     }
                 } else {
                     const commandList = Object.values(plugins)
                         .map(p => `${prefix}${p.name} - ${p.description || ''}`)
                         .join('\n');
                     
-                    await cyphers.sendMessage(m.chat, { 
-                        text: `â Command not found!\n\nð Commands:\n${commandList || 'No commands loaded'}` 
-                    }, { quoted: m });
+                    // Use helper function for proper quoting
+                    await sendReply(cyphers, m.chat, 
+                        `📋 Command not found!\n\n📚 Available Commands:\n${commandList || 'No commands loaded'}`, 
+                        m
+                    );
                 }
             }
         } catch (err) {
@@ -432,11 +441,11 @@ async function cyphersStart() {
                 }
             }
             
-            console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
-            console.log('\x1b[32mâ             â CYPHERS-V2 Active ð         â\x1b[0m');
-            console.log('\x1b[32mâ     ð¦ ${Object.keys(plugins).length} plugins loaded      â\x1b[0m');
-            console.log('\x1b[32mâ     ð Auto-updater: Active              â\x1b[0m');
-            console.log('\x1b[32mâââââââââââââââââââââââââââââââââââââââââââââ\x1b[0m');
+            console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
+            console.log('\x1b[32m║             ✅ CYPHERS-V2 Active 😊         ║\x1b[0m');
+            console.log(`\x1b[32m║     📦 ${Object.keys(plugins).length} plugins loaded      ║\x1b[0m`);
+            console.log('\x1b[32m║     🚀 Auto-updater: Active              ║\x1b[0m');
+            console.log('\x1b[32m═══════════════════════════════════════════════════════════════\x1b[0m');
         }
     });
 
