@@ -54,6 +54,24 @@ let autoUpdater = null;
 let cyphersInstance = null;
 let botRestarting = false;
 
+// ============================
+// ANTIDELETE PLUGIN HANDLER
+// ============================
+let antideletePlugin = null;
+
+function loadAntideletePlugin() {
+    try {
+        const antideletePath = path.join(__dirname, 'plugins/antidelete.js');
+        if (fs.existsSync(antideletePath)) {
+            delete require.cache[require.resolve(antideletePath)];
+            antideletePlugin = require(antideletePath);
+            console.log(color('✅ Anti-delete plugin loaded', 'green'));
+        }
+    } catch (error) {
+        console.log(color('⚠️ Anti-delete plugin failed to load: ' + error.message, 'yellow'));
+    }
+}
+
 // Function to load and apply config settings
 function applyConfigSettings() {
     try {
@@ -210,6 +228,11 @@ function loadPlugins(reload = false) {
                             if (updatedPlugin.name && updatedPlugin.execute) {
                                 plugins[updatedPlugin.name] = updatedPlugin;
                             }
+                            
+                            // Special handling for antidelete plugin
+                            if (file === 'antidelete.js') {
+                                loadAntideletePlugin();
+                            }
                         } catch (error) {
                             // Silent error handling
                         }
@@ -258,6 +281,11 @@ function setupHotReload() {
                         // If it's a plugin, update plugins list
                         if (dirPath.includes('plugins')) {
                             loadPlugins(true);
+                        }
+                        
+                        // Special handling for antidelete plugin
+                        if (filename === 'antidelete.js') {
+                            loadAntideletePlugin();
                         }
                     } catch (error) {
                         // Silent error handling
@@ -421,8 +449,12 @@ async function cyphersStart() {
     
     // Setup enhanced hot reload
     loadPlugins();
+    loadAntideletePlugin(); // Load antidelete plugin
     setupHotReload();
     
+    // ============================
+    // MESSAGE UPSERT HANDLER
+    // ============================
     cyphers.ev.on("messages.upsert", async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
@@ -438,6 +470,11 @@ async function cyphersStart() {
             
             if (mek.key.id.startsWith('BAE5') && mek.key.id.length === 16) return;
             if (mek.key.id.startsWith('FatihArridho_')) return;
+            
+            // Call antidelete onMessage if plugin exists
+            if (antideletePlugin && antideletePlugin.onMessage) {
+                await antideletePlugin.onMessage(cyphers, mek);
+            }
             
             const m = smsg(cyphers, mek, store);
             
@@ -491,6 +528,25 @@ async function cyphersStart() {
             }
         } catch (err) {
             console.log(color(`Message error: ${err}`, 'red'));
+        }
+    });
+    
+    // ============================
+    // MESSAGE DELETION HANDLER
+    // ============================
+    cyphers.ev.on('messages.update', async (messageUpdate) => {
+        try {
+            for (const update of messageUpdate) {
+                // Check if message was deleted (messageStubType 7 = REVOKE)
+                if (update.update && update.update.messageStubType === 7) {
+                    // This is a message deletion event
+                    if (antideletePlugin && antideletePlugin.onMessageDelete) {
+                        await antideletePlugin.onMessageDelete(cyphers, update);
+                    }
+                }
+            }
+        } catch (error) {
+            console.log(color(`Delete handler error: ${error.message}`, 'red'));
         }
     });
 
