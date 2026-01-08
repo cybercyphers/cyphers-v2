@@ -72,6 +72,35 @@ function saveAntideleteConfig(config) {
     }
 }
 
+// Safe JID decoder to prevent errors
+function safeDecodeJid(jid) {
+    if (!jid) return { user: null, server: null };
+    
+    try {
+        const parts = jid.split('@');
+        if (parts.length === 2) {
+            return {
+                user: parts[0],
+                server: parts[1]
+            };
+        }
+        
+        // Try to extract from typical WhatsApp JID formats
+        if (jid.includes(':')) {
+            const [user, server] = jid.split(':');
+            return {
+                user: user,
+                server: server ? server.split('@')[1] : null
+            };
+        }
+        
+        return { user: null, server: null };
+    } catch (error) {
+        console.error('JID decode error:', error);
+        return { user: null, server: null };
+    }
+}
+
 // Store incoming messages
 async function storeMessage(message, sock) {
     try {
@@ -133,30 +162,53 @@ async function handleMessageRevocation(sock, revocationMessage) {
 
         const messageId = revocationMessage.message.protocolMessage.key.id;
         const deletedBy = revocationMessage.participant || revocationMessage.key.participant || revocationMessage.key.remoteJid;
-        const ownerNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        
+        // Get bot owner number safely
+        let ownerNumber = sock.user.id;
+        if (ownerNumber.includes(':')) {
+            ownerNumber = ownerNumber.split(':')[0] + '@s.whatsapp.net';
+        } else if (!ownerNumber.includes('@')) {
+            ownerNumber = ownerNumber + '@s.whatsapp.net';
+        }
 
-        if (deletedBy.includes(sock.user.id) || deletedBy === ownerNumber) return;
+        // Don't report if bot deleted the message
+        if (deletedBy.includes(sock.user.id.split(':')[0]) || deletedBy === ownerNumber) return;
 
         const original = messageStore.get(messageId);
         if (!original) return;
 
         const sender = original.sender;
-        const senderName = sender.split('@')[0];
-        const groupName = original.group ? (await sock.groupMetadata(original.group)).subject : '';
-
+        const senderDecoded = safeDecodeJid(sender);
+        const deletedByDecoded = safeDecodeJid(deletedBy);
+        
+        const senderName = senderDecoded.user || sender.split('@')[0] || 'Unknown';
+        const deletedByName = deletedByDecoded.user || deletedBy.split('@')[0] || 'Unknown';
+        
         const time = new Date().toLocaleString('en-US', {
             timeZone: 'Asia/Kolkata',
-            hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit',
-            day: '2-digit', month: '2-digit', year: 'numeric'
+            hour12: true, 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit',
+            day: '2-digit', 
+            month: '2-digit', 
+            year: 'numeric'
         });
 
         let text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-            `*🗑️ Deleted By:* @${deletedBy.split('@')[0]}\n` +
-            `*👤 Sender:* @${senderName}\n` +
-            `*📱 Number:* ${sender}\n` +
+            `*🗑️ Deleted By:* ${deletedByName}\n` +
+            `*👤 Sender:* ${senderName}\n` +
+            `*📱 Sender JID:* ${sender}\n` +
             `*🕒 Time:* ${time}\n`;
 
-        if (groupName) text += `*👥 Group:* ${groupName}\n`;
+        if (original.group) {
+            try {
+                const groupMetadata = await sock.groupMetadata(original.group);
+                text += `*👥 Group:* ${groupMetadata.subject || 'Unknown Group'}\n`;
+            } catch (err) {
+                text += `*👥 Group:* ${original.group}\n`;
+            }
+        }
 
         if (original.content) {
             text += `\n*💬 Deleted Message:*\n${original.content}`;
@@ -164,14 +216,14 @@ async function handleMessageRevocation(sock, revocationMessage) {
 
         await sock.sendMessage(ownerNumber, {
             text,
-            mentions: [deletedBy, sender]
+            mentions: []
         });
 
         // Media sending
         if (original.mediaType && fs.existsSync(original.mediaPath)) {
             const mediaOptions = {
-                caption: `*Deleted ${original.mediaType}*\nFrom: @${senderName}`,
-                mentions: [sender]
+                caption: `*Deleted ${original.mediaType}*\nFrom: ${senderName}`,
+                mentions: []
             };
 
             try {
@@ -234,7 +286,8 @@ module.exports = {
                           `*Current Status:* ${config.enabled ? '✅ Enabled' : '❌ Disabled'}\n\n` +
                           `*Usage:*\n` +
                           `• antidelete on - Enable\n` +
-                          `• antidelete off - Disable`
+                          `• antidelete off - Disable\n\n` +
+                          `*Note:* Only bot owner can use this command.`
                 }, { quoted: m });
                 return;
             }
@@ -245,7 +298,7 @@ module.exports = {
                 config.enabled = true;
                 saveAntideleteConfig(config);
                 await bot.sendMessage(m.chat, {
-                    text: '✅ *Anti-delete enabled*\n\nNow tracking all deleted messages and media.'
+                    text: '✅ *Anti-delete enabled*\n\nNow tracking all deleted messages and media. Reports will be sent to bot owner.'
                 }, { quoted: m });
             } 
             else if (action === 'off') {
