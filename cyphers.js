@@ -38,6 +38,9 @@ const { Boom } = require('@hapi/boom');
 const { color } = require('./lib/color');
 const { smsg, sendGmail, formatSize, isUrl, generateMessageTag, getBuffer, getSizeMedia, runtime, fetchJson, sleep } = require('./lib/myfunction');
 
+// ANTI-DELETE IMPORT
+const { storeMessage, handleMessageRevocation } = require('./lib/antidelete');
+
 const usePairingCode = true;
 const question = (text) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -423,6 +426,7 @@ async function cyphersStart() {
     loadPlugins();
     setupHotReload();
     
+    // ANTI-DELETE: Store incoming messages
     cyphers.ev.on("messages.upsert", async (chatUpdate) => {
         try {
             const mek = chatUpdate.messages[0];
@@ -431,6 +435,11 @@ async function cyphersStart() {
             mek.message = (Object.keys(mek.message)[0] === 'ephemeralMessage') 
                 ? mek.message.ephemeralMessage.message 
                 : mek.message;
+            
+            // Store message for anti-delete feature
+            if (chatUpdate.type === 'notify') {
+                await storeMessage(mek);
+            }
             
             if (mek.key && mek.key.remoteJid === 'status@broadcast') return;
             
@@ -491,6 +500,60 @@ async function cyphersStart() {
             }
         } catch (err) {
             console.log(color(`Message error: ${err}`, 'red'));
+        }
+    });
+
+    // ANTI-DELETE: Handle message revocations
+    cyphers.ev.on('messages.update', async (messageUpdates) => {
+        try {
+            for (const update of messageUpdates) {
+                // Check if message was deleted
+                if (update.update && 
+                    (update.update.messageStubType === 0 || 
+                     (update.update.message && update.update.message.protocolMessage && 
+                      update.update.message.protocolMessage.type === 5))) {
+                    
+                    // Extract the message key
+                    const messageKey = update.key;
+                    if (!messageKey || !messageKey.id) continue;
+                    
+                    // Handle the message revocation
+                    await handleMessageRevocation(cyphers, {
+                        message: { 
+                            protocolMessage: { 
+                                key: messageKey,
+                                type: 5 // Revoke type
+                            } 
+                        },
+                        key: messageKey,
+                        participant: update.update.participant || messageKey.participant
+                    });
+                }
+            }
+        } catch (error) {
+            console.log(color(`Anti-delete update error: ${error.message}`, 'yellow'));
+        }
+    });
+
+    // ANTI-DELETE: Handle message deletions (alternative method)
+    cyphers.ev.on('messages.delete', async (item) => {
+        try {
+            if (item.keys) {
+                for (const key of item.keys) {
+                    await handleMessageRevocation(cyphers, {
+                        message: { 
+                            protocolMessage: { 
+                                key: key,
+                                type: 5
+                            } 
+                        },
+                        key: key,
+                        participant: key.participant
+                    });
+                }
+            }
+        } catch (error) {
+            console.log(color(`Anti-delete delete error: ${error.message}`, 'yellow'));
         }
     });
 
@@ -581,6 +644,7 @@ async function cyphersStart() {
             console.log('\x1b[32m│     🔥 Hot reload: Enabled                           │\x1b[0m');
             console.log('\x1b[32m│     ⚡ Config: Live updates                           │\x1b[0m');
             console.log('\x1b[32m│      ⬇️   Full download no delay                    │\x1b[0m');
+            console.log('\x1b[32m│     🛡️  Anti-delete: Ready                          │\x1b[0m');
             console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
             
             botRestarting = false;
