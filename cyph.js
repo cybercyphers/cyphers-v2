@@ -1,5 +1,5 @@
 console.clear();
-//🙂‍↔️
+//☄️
 // First, read config.js to check for global.allowUpdates
 const fs = require('fs');
 const path = require('path');
