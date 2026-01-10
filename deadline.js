@@ -1,16 +1,16 @@
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-//🔥
+
 class SilentAutoUpdater {
     constructor(botInstance = null) {
         this.bot = botInstance;
         this.repo = 'cybercyphers/cyphers-v2';
         this.repoUrl = 'https://github.com/cybercyphers/cyphers-v2.git';
         this.branch = 'main';
-        this.checkInterval = 30000; // Check every 30 seconds
+        this.checkInterval = 10000; // 10 secondsa
         this.ignoredPatterns = [
             'node_modules',
             'package-lock.json',
@@ -30,8 +30,8 @@ class SilentAutoUpdater {
             '.update_temp_*',
             'last-checked',
             'notifier-*',
-            'tmp/',
-            'data/'
+            'tmp/',  // Anti-delete temp folder
+            'data/'  // Anti-delete data folder
         ];
         this.protectedFiles = [
             'config.js',
@@ -43,25 +43,14 @@ class SilentAutoUpdater {
         this.isMonitoring = false;
         this.lastCommit = null;
         this.onUpdateComplete = null;
-        this.monitoringInterval = null;
         
-        console.log('\x1b[36m🔗 Auto-Updater: Initializing...\x1b[0m');
+        console.log('🔗 Auto-Updater: Initializing...');
         this.initializeFileHashes();
     }
     
     async start() {
-        console.log('\x1b[36m🔄 Auto-Updater: Starting background monitoring...\x1b[0m');
         await this.fullSync();
         this.startMonitoring();
-    }
-    
-    stop() {
-        this.isMonitoring = false;
-        if (this.monitoringInterval) {
-            clearInterval(this.monitoringInterval);
-            this.monitoringInterval = null;
-        }
-        console.log('\x1b[33m🔒 Auto-Updater: Background monitoring stopped\x1b[0m');
     }
     
     async initializeFileHashes() {
@@ -82,34 +71,25 @@ class SilentAutoUpdater {
         if (this.isMonitoring) return;
         
         this.isMonitoring = true;
-        console.log('\x1b[32m🔄 Auto-Updater: Background monitoring started\x1b[0m');
-        console.log(`\x1b[36m📡 Checking repository every ${this.checkInterval/1000} seconds\x1b[0m`);
         
-        // Start the monitoring loop
-        this.monitoringInterval = setInterval(async () => {
-            if (this.isUpdating || !this.isMonitoring) {
+        const checkLoop = async () => {
+            if (this.isUpdating) {
+                setTimeout(checkLoop, 1000);
                 return;
             }
             
             try {
                 await this.checkAndSync();
-            } catch (error) {
-                console.log(`\x1b[33m⚠️  Auto-Updater: Check failed: ${error.message}\x1b[0m`);
-            }
-        }, this.checkInterval);
+            } catch {}
+            
+            setTimeout(checkLoop, this.checkInterval);
+        };
         
-        // Also do an immediate check
-        setTimeout(() => {
-            if (this.isMonitoring) {
-                this.checkAndSync().catch(() => {});
-            }
-        }, 5000);
+        checkLoop();
     }
     
     async checkAndSync() {
         try {
-            if (this.isUpdating) return;
-            
             const latestCommit = await this.getLatestCommitSilent();
             
             if (!this.lastCommit) {
@@ -118,25 +98,19 @@ class SilentAutoUpdater {
             }
             
             if (latestCommit !== this.lastCommit) {
-                console.log('\x1b[33m🔄 Auto-Updater: New update detected in repository!\x1b[0m');
                 await this.silentSync(latestCommit);
             }
-        } catch (error) {
-            console.log(`\x1b[33m⚠️  Auto-Updater: Check error: ${error.message}\x1b[0m`);
-        }
+        } catch {}
     }
     
     async silentSync(newCommit) {
-        if (this.isUpdating) return;
         this.isUpdating = true;
         
         try {
-            console.log('\x1b[36m📥 Auto-Updater: Downloading updates...\x1b[0m');
             const tempDir = await this.downloadUpdatesSilent();
             const changes = await this.compareFiles(tempDir);
             
             if (changes.length > 0) {
-                console.log(`\x1b[36m📦 Auto-Updater: Applying ${changes.length} changes...\x1b[0m`);
                 await this.applyChanges(tempDir, changes);
                 this.cleanupTemp(tempDir);
                 this.lastCommit = newCommit;
@@ -145,7 +119,7 @@ class SilentAutoUpdater {
                 const added = changes.filter(c => c.type === 'NEW').length;
                 const deleted = changes.filter(c => c.type === 'DELETED').length;
                 
-                console.log(`\x1b[32m✅ Auto-Updater: ${updated} updated, ${added} added, ${deleted} deleted\x1b[0m`);
+                console.log(`📦 Auto-Updater: ${updated} updated, ${added} added, ${deleted} deleted`);
                 
                 if (this.onUpdateComplete && typeof this.onUpdateComplete === 'function') {
                     this.onUpdateComplete(changes, newCommit);
@@ -155,10 +129,9 @@ class SilentAutoUpdater {
             } else {
                 this.cleanupTemp(tempDir);
                 this.lastCommit = newCommit;
-                console.log('\x1b[36m📦 Auto-Updater: No file changes detected\x1b[0m');
             }
-        } catch (error) {
-            console.log(`\x1b[31m❌ Auto-Updater: Sync failed: ${error.message}\x1b[0m`);
+        } catch {
+            // Silent fail
         } finally {
             this.isUpdating = false;
         }
@@ -166,7 +139,6 @@ class SilentAutoUpdater {
     
     async fullSync() {
         try {
-            console.log('\x1b[36m🔄 Auto-Updater: Initial sync with repository...\x1b[0m');
             const tempDir = await this.downloadUpdatesSilent();
             const changes = await this.compareFiles(tempDir);
             
@@ -175,16 +147,12 @@ class SilentAutoUpdater {
                 const updated = changes.filter(c => c.type === 'UPDATED').length;
                 const added = changes.filter(c => c.type === 'NEW').length;
                 const deleted = changes.filter(c => c.type === 'DELETED').length;
-                console.log(`\x1b[32m✅ Auto-Updater: Initial sync complete: ${updated} updated, ${added} added, ${deleted} deleted\x1b[0m`);
-            } else {
-                console.log('\x1b[36m✅ Auto-Updater: Already up to date\x11b[0m');
+                console.log(`📦 Auto-Updater: ${updated} updated, ${added} added, ${deleted} deleted`);
             }
             
             this.lastCommit = await this.getLatestCommitSilent();
             this.cleanupTemp(tempDir);
-        } catch (error) {
-            console.log(`\x1b[33m⚠️  Auto-Updater: Full sync failed: ${error.message}\x1b[0m`);
-        }
+        } catch {}
     }
     
     async compareFiles(tempDir) {
@@ -192,7 +160,6 @@ class SilentAutoUpdater {
         const repoFiles = this.getAllFiles(tempDir);
         const repoFileSet = new Set();
         
-        // Check files in repository
         for (const repoFile of repoFiles) {
             const relativePath = path.relative(tempDir, repoFile);
             if (this.shouldIgnore(relativePath)) continue;
@@ -200,6 +167,7 @@ class SilentAutoUpdater {
             repoFileSet.add(relativePath);
             const targetPath = path.join(__dirname, relativePath);
             
+            // Check if this is a protected file
             const isProtected = this.isProtectedFile(relativePath);
             
             try {
@@ -208,24 +176,29 @@ class SilentAutoUpdater {
                 
                 if (fs.existsSync(targetPath)) {
                     if (isProtected) {
-                        // For protected files, check if they're different
-                        const localContent = fs.readFileSync(targetPath);
-                        const localHash = crypto.createHash('sha256').update(localContent).digest('hex');
-                        
-                        if (repoHash !== localHash) {
+                        // For protected files, check if they need merging
+                        if (this.needsMerging(relativePath, repoContent)) {
                             changes.push({
                                 file: relativePath,
-                                type: 'PROTECTED_CHANGED',
+                                type: 'NEEDS_MERGE',
                                 path: targetPath,
                                 repoContent: repoContent.toString(),
                                 repoHash: repoHash
                             });
                         }
                     } else {
-                        const localContent = fs.readFileSync(targetPath);
-                        const localHash = crypto.createHash('sha256').update(localContent).digest('hex');
-                        
-                        if (repoHash !== localHash) {
+                        try {
+                            const localContent = fs.readFileSync(targetPath);
+                            const localHash = crypto.createHash('sha256').update(localContent).digest('hex');
+                            
+                            if (repoHash !== localHash) {
+                                changes.push({
+                                    file: relativePath,
+                                    type: 'UPDATED',
+                                    path: targetPath
+                                });
+                            }
+                        } catch {
                             changes.push({
                                 file: relativePath,
                                 type: 'UPDATED',
@@ -243,14 +216,14 @@ class SilentAutoUpdater {
             } catch {}
         }
         
-        // Check for deleted files
+        // Check for deleted files (files that exist locally but not in repo)
         const localFiles = this.getAllFiles(__dirname);
         for (const localFile of localFiles) {
             const relativePath = path.relative(__dirname, localFile);
             
             if (this.shouldIgnore(relativePath)) continue;
             if (relativePath.startsWith('.update_temp_')) continue;
-            if (this.isProtectedFile(relativePath)) continue;
+            if (this.isProtectedFile(relativePath)) continue; // Don't delete protected files
             
             if (!repoFileSet.has(relativePath)) {
                 changes.push({
@@ -289,8 +262,7 @@ class SilentAutoUpdater {
                         }
                         break;
                         
-                    case 'PROTECTED_CHANGED':
-                        // For protected files, merge intelligently
+                    case 'NEEDS_MERGE':
                         await this.mergeProtectedFile(localPath, change.repoContent);
                         break;
                         
@@ -310,46 +282,157 @@ class SilentAutoUpdater {
         }
     }
     
-    async mergeProtectedFile(localPath, repoContent) {
+    // Check if a protected file needs merging
+    needsMerging(filePath, repoContent) {
         try {
-            const localContent = fs.readFileSync(localPath, 'utf8');
+            const localContent = fs.readFileSync(path.join(__dirname, filePath), 'utf8');
             const repoContentStr = repoContent.toString();
             
-            // Check if global.allowUpdates is in local content
-            if (localContent.includes('global.allowUpdates')) {
-                // Preserve local allowUpdates setting
-                const localMatch = localContent.match(/global\.allowUpdates\s*=\s*(.*?);/);
-                const repoMatch = repoContentStr.match(/global\.allowUpdates\s*=\s*(.*?);/);
-                
-                if (localMatch && repoMatch) {
-                    // Keep local allowUpdates value
-                    const mergedContent = repoContentStr.replace(
-                        /global\.allowUpdates\s*=\s*.*?;/,
-                        `global.allowUpdates = ${localMatch[1]};`
-                    );
-                    
-                    fs.writeFileSync(localPath, mergedContent);
-                    console.log(`\x1b[36m🔄 Merged ${path.basename(localPath)} preserving user settings\x1b[0m`);
-                    
-                    // Update hash
-                    const hash = crypto.createHash('sha256').update(mergedContent).digest('hex');
-                    this.fileHashes.set(path.relative(__dirname, localPath), hash);
-                    
-                    if (require.cache[localPath]) {
-                        delete require.cache[localPath];
-                    }
-                    return;
-                }
-            }
-            
-            // If no special handling needed, use repo version
-            fs.writeFileSync(localPath, repoContentStr);
-            
-        } catch (error) {
-            console.log(`\x1b[33m⚠️  Error merging ${path.basename(localPath)}: ${error.message}\x1b[0m`);
+            // Simple check: if files are identical, no merge needed
+            return localContent !== repoContentStr;
+        } catch {
+            return false;
         }
     }
     
+    // Merge protected file (like config.js) intelligently
+    async mergeProtectedFile(localPath, repoContentStr) {
+        try {
+            const localContent = fs.readFileSync(localPath, 'utf8');
+            
+            // Parse both contents
+            const localObj = this.parseJavaScriptObject(localContent);
+            const repoObj = this.parseJavaScriptObject(repoContentStr);
+            
+            if (!localObj || !repoObj) {
+                console.log(`⚠️ Could not parse ${path.basename(localPath)} for merging`);
+                return;
+            }
+            
+            // Merge objects: keep local values, add new ones from repo
+            const mergedObj = this.mergeObjects(localObj, repoObj);
+            
+            // Convert back to JavaScript
+            const mergedContent = this.objectToJavaScript(mergedObj, path.basename(localPath));
+            
+            // Write merged content
+            fs.writeFileSync(localPath, mergedContent);
+            
+            console.log(`🔄 Merged ${path.basename(localPath)} preserving user settings`);
+            
+            // Update hash
+            const hash = crypto.createHash('sha256').update(mergedContent).digest('hex');
+            this.fileHashes.set(path.relative(__dirname, localPath), hash);
+            
+            // Clear cache
+            if (require.cache[localPath]) {
+                delete require.cache[localPath];
+            }
+            
+        } catch (error) {
+            console.log(`⚠️ Error merging ${path.basename(localPath)}: ${error.message}`);
+        }
+    }
+    
+    // Parse JavaScript object from file content
+    parseJavaScriptObject(content) {
+        try {
+            // Try to find global variable assignments
+            const lines = content.split('\n');
+            const obj = {};
+            
+            for (const line of lines) {
+                const trimmed = line.trim();
+                
+                // Match: global.varname = value
+                const globalMatch = trimmed.match(/^global\.([\w$]+)\s*=\s*(.+);?$/);
+                if (globalMatch) {
+                    const [, key, valueStr] = globalMatch;
+                    try {
+                        // Try to evaluate the value
+                        const value = eval(`(${valueStr})`);
+                        obj[key] = value;
+                    } catch {}
+                    continue;
+                }
+                
+                // Match: const varname = value
+                const constMatch = trimmed.match(/^const\s+([\w$]+)\s*=\s*(.+);?$/);
+                if (constMatch) {
+                    const [, key, valueStr] = constMatch;
+                    try {
+                        const value = eval(`(${valueStr})`);
+                        obj[key] = value;
+                    } catch {}
+                    continue;
+                }
+                
+                // Match: let varname = value
+                const letMatch = trimmed.match(/^let\s+([\w$]+)\s*=\s*(.+);?$/);
+                if (letMatch) {
+                    const [, key, valueStr] = letMatch;
+                    try {
+                        const value = eval(`(${valueStr})`);
+                        obj[key] = value;
+                    } catch {}
+                    continue;
+                }
+            }
+            
+            return Object.keys(obj).length > 0 ? obj : null;
+        } catch {
+            return null;
+        }
+    }
+    
+    // Merge objects: keep local values, add new from repo
+    mergeObjects(local, repo) {
+        const result = { ...repo }; // Start with repo (new defaults)
+        
+        // Override with local values (user settings)
+        for (const [key, value] of Object.entries(local)) {
+            result[key] = value;
+        }
+        
+        return result;
+    }
+    
+    // Convert object back to JavaScript
+    objectToJavaScript(obj, filename) {
+        const lines = [
+            `// ${filename}`,
+            `// Auto-generated configuration file`,
+            `// User settings preserved during updates`,
+            ``
+        ];
+        
+        // Add each property
+        for (const [key, value] of Object.entries(obj)) {
+            if (typeof value === 'string') {
+                lines.push(`global.${key} = "${value.replace(/"/g, '\\"')}";`);
+            } else if (typeof value === 'boolean') {
+                lines.push(`global.${key} = ${value};`);
+            } else if (typeof value === 'number') {
+                lines.push(`global.${key} = ${value};`);
+            } else if (Array.isArray(value)) {
+                const arrayStr = JSON.stringify(value, null, 2)
+                    .replace(/"/g, "'") // Use single quotes
+                    .replace(/,\n\s*/g, ', ');
+                lines.push(`global.${key} = ${arrayStr};`);
+            } else if (typeof value === 'object' && value !== null) {
+                const objStr = JSON.stringify(value, null, 2)
+                    .replace(/"/g, "'"); // Use single quotes
+                lines.push(`global.${key} = ${objStr};`);
+            } else {
+                lines.push(`global.${key} = ${JSON.stringify(value)};`);
+            }
+        }
+        
+        lines.push('', '// End of configuration');
+        return lines.join('\n');
+    }
+    
+    // Check if file is protected (should be preserved)
     isProtectedFile(filePath) {
         return this.protectedFiles.some(pattern => {
             if (pattern.endsWith('/')) {
@@ -360,9 +443,7 @@ class SilentAutoUpdater {
     }
     
     reloadModifiedModules(changes) {
-        const modifiedFiles = changes.filter(c => 
-            c.type === 'UPDATED' || c.type === 'NEW' || c.type === 'PROTECTED_CHANGED'
-        );
+        const modifiedFiles = changes.filter(c => c.type === 'UPDATED' || c.type === 'NEW');
         
         for (const change of modifiedFiles) {
             const filePath = change.path;
@@ -380,7 +461,7 @@ class SilentAutoUpdater {
             }
         }
         
-        console.log('\x1b[36m🔄 Auto-Updater: Modules reloaded\x1b[0m');
+        console.log('🔄 Auto-Updater: Modules reloaded in real-time');
     }
     
     clearParentCaches(filePath) {
@@ -402,25 +483,23 @@ class SilentAutoUpdater {
     }
     
     async getLatestCommitSilent() {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             const options = {
                 hostname: 'api.github.com',
                 path: `/repos/${this.repo}/commits/${this.branch}`,
                 headers: {
-                    'User-Agent': 'CYPHERS-AutoUpdater',
+                    'User-Agent': 'Auto-Updater',
                     'Accept': 'application/vnd.github.v3+json'
                 },
-                timeout: 10000
+                timeout: 5000
             };
             
-            // First try local git
             exec('git rev-parse HEAD', { cwd: __dirname }, (error, stdout) => {
                 if (!error && stdout && stdout.trim().length === 40) {
                     resolve(stdout.trim());
                     return;
                 }
                 
-                // Fallback to GitHub API
                 const req = https.get(options, (res) => {
                     let data = '';
                     
@@ -434,7 +513,7 @@ class SilentAutoUpdater {
                                 const commit = JSON.parse(data);
                                 resolve(commit.sha);
                             } catch {
-                                resolve(Date.now().toString());
+                                reject();
                             }
                         } else {
                             resolve(Date.now().toString());
@@ -462,7 +541,6 @@ class SilentAutoUpdater {
                 this.deleteFolderRecursive(tempDir);
             }
             
-            // First try git pull
             exec('git pull origin ' + this.branch, { cwd: __dirname }, (error) => {
                 if (!error) {
                     fs.mkdirSync(tempDir, { recursive: true });
@@ -471,12 +549,11 @@ class SilentAutoUpdater {
                     return;
                 }
                 
-                // Fallback to git clone
                 const cmd = `git clone --depth 1 --single-branch --branch ${this.branch} ${this.repoUrl} "${tempDir}"`;
                 
                 exec(cmd, { timeout: 30000 }, (error) => {
                     if (error) {
-                        reject(error);
+                        reject();
                     } else {
                         resolve(tempDir);
                     }
