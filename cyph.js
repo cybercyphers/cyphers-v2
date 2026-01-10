@@ -1,15 +1,85 @@
 console.clear();
-console.log('Starting...');
 
-// Import agreement system FIRST
+// First, read config.js to check for global.allowUpdates
+const fs = require('fs');
+const path = require('path');
+
+// Function to safely parse config.js and check for global.allowUpdates
+function checkConfigForAllowUpdates() {
+    try {
+        const configPath = path.join(__dirname, './settings/config.js');
+        
+        if (!fs.existsSync(configPath)) {
+            return '_'; // Config doesn't exist, show agreement
+        }
+        
+        const configContent = fs.readFileSync(configPath, 'utf8');
+        
+        // Parse the config file safely (NO eval!)
+        // Look for global.allowUpdates = true/false
+        const lines = configContent.split('\n');
+        
+        for (const line of lines) {
+            const trimmed = line.trim();
+            
+            // Check for global.allowUpdates = true
+            if (trimmed.includes('global.allowUpdates')) {
+                if (trimmed.includes('= true')) {
+                    return true;
+                }
+                if (trimmed.includes('= false')) {
+                    return false;
+                }
+                // Check for specific values
+                const match = trimmed.match(/global\.allowUpdates\s*=\s*(true|false)/i);
+                if (match) {
+                    return match[1].toLowerCase() === 'true';
+                }
+            }
+            
+            // Also check for module.exports pattern
+            if (trimmed.includes('allowUpdates:')) {
+                const match = trimmed.match(/allowUpdates\s*:\s*(true|false)/i);
+                if (match) {
+                    return match[1].toLowerCase() === 'true';
+                }
+            }
+        }
+        
+        // If we reach here, global.allowUpdates is not set
+        return '_';
+        
+    } catch (error) {
+        console.log('\x1b[33m⚠️  Could not read config file, showing agreement\x1b[0m');
+        return '_';
+    }
+}
+
+// Import agreement system
 const agreementModule = require('./lib/agreements');
 
-// Simple agreement check function
+// Modified agreement check function
 async function checkAndSetup() {
     try {
         console.clear();
         
+        // Check config first
+        const configStatus = checkConfigForAllowUpdates();
+        
+        // If config has a boolean value (true/false), return it
+        if (configStatus === true || configStatus === false) {
+            console.log('\x1b[36m✅ Using saved auto-update setting\x1b[0m');
+            console.log(`\x1b[36mAuto-updates: ${configStatus ? 'ENABLED' : 'DISABLED'}\x1b[0m`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return configStatus;
+        }
+        
+        // If config has '_' or doesn't exist, show agreement
+        console.log('\x1b[36mFirst time setup - Agreement required\x1b[0m');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
         // Show the bot banner
+        console.clear();
         await agreementModule.displayBotBanner("CYPHERS-V2 SETUP", true);
         
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -17,8 +87,8 @@ async function checkAndSetup() {
         // Run the agreement setup
         const autoUpdateEnabled = await agreementModule.getUserAgreement();
         
-        // Save the setting
-        agreementModule.updateConfigFile(autoUpdateEnabled);
+        // Save the setting to config
+        await saveAllowUpdatesToConfig(autoUpdateEnabled);
         
         // Clear screen and show success
         console.clear();
@@ -29,7 +99,7 @@ async function checkAndSetup() {
         console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
         
         // Wait a moment for user to read
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
         return autoUpdateEnabled;
         
@@ -40,9 +110,53 @@ async function checkAndSetup() {
     }
 }
 
+// Function to save allowUpdates to config.js
+async function saveAllowUpdatesToConfig(allowUpdates) {
+    try {
+        const configPath = path.join(__dirname, './settings/config.js');
+        
+        let configContent = '';
+        if (fs.existsSync(configPath)) {
+            configContent = fs.readFileSync(configPath, 'utf8');
+        }
+        
+        // Check if global.allowUpdates already exists in config
+        if (configContent.includes('global.allowUpdates')) {
+            // Replace existing value
+            configContent = configContent.replace(
+                /global\.allowUpdates\s*=\s*(true|false)/g,
+                `global.allowUpdates = ${allowUpdates}`
+            );
+        } else {
+            // Add at the beginning of the file
+            const lines = configContent.split('\n');
+            
+            // Find a good place to insert (after other global declarations)
+            let insertIndex = 0;
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].trim().startsWith('global.')) {
+                    insertIndex = i + 1;
+                } else if (lines[i].trim().length > 0 && !lines[i].trim().startsWith('//')) {
+                    break;
+                }
+            }
+            
+            lines.splice(insertIndex, 0, `global.allowUpdates = ${allowUpdates};`);
+            configContent = lines.join('\n');
+        }
+        
+        // Write back to config
+        fs.writeFileSync(configPath, configContent, 'utf8');
+        console.log(`\x1b[32m✅ Auto-update preference saved to config.js\x1b[0m`);
+        
+    } catch (error) {
+        console.log(`\x1b[33m⚠️  Could not save to config: ${error.message}\x1b[0m`);
+    }
+}
+
 // Wrap the rest of your code in a function
 async function startBot() {
-    // Check agreement first
+    // Check agreement/config first
     const autoUpdateEnabled = await checkAndSetup();
     
     // Now load config (after agreement is set)
@@ -55,6 +169,8 @@ async function startBot() {
     
     // Only require AutoUpdater if updates are enabled
     let AutoUpdater = null;
+    let autoUpdaterInstance = null;
+    
     if (global.allowUpdates) {
         try {
             AutoUpdater = require('./deadline');
@@ -92,8 +208,6 @@ async function startBot() {
 
     const pino = require('pino');
     const readline = require("readline");
-    const fs = require('fs');
-    const path = require('path');
     const { Boom } = require('@hapi/boom');
     const { color } = require('./lib/color');
     const { smsg, sendGmail, formatSize, isUrl, generateMessageTag, getBuffer, getSizeMedia, runtime, fetchJson, sleep } = require('./lib/myfunction');
@@ -132,9 +246,9 @@ async function startBot() {
     let plugins = {};
     let pluginWatchers = {};
     let loadedPlugins = new Set();
-    let autoUpdater = null;
     let cyphersInstance = null;
     let botRestarting = false;
+    let updateCheckInterval = null;
 
     // Function to load and apply config settings
     function applyConfigSettings() {
@@ -143,6 +257,12 @@ async function startBot() {
             const configPath = path.join(__dirname, './settings/config.js');
             delete require.cache[require.resolve(configPath)];
             require(configPath);
+            
+            // Update global.allowUpdates from config
+            const configStatus = checkConfigForAllowUpdates();
+            if (configStatus === true || configStatus === false) {
+                global.allowUpdates = configStatus;
+            }
             
             // Apply settings to bot instance if it exists
             if (cyphersInstance) {
@@ -155,6 +275,7 @@ async function startBot() {
                 }
                 
                 console.log(color(`⚡ Bot mode: ${cyphersInstance.public ? 'Public' : 'Private'}`, 'cyan'));
+                console.log(color(`⚡ Auto-updates: ${global.allowUpdates ? 'Enabled' : 'Disabled'}`, 'cyan'));
             }
             
             return true;
@@ -162,6 +283,30 @@ async function startBot() {
             console.log(color(`✗ Failed to apply config: ${error.message}`, 'red'));
             return false;
         }
+    }
+
+    // Function to check for updates continuously (not just on restart)
+    function startContinuousUpdateChecking() {
+        if (updateCheckInterval) {
+            clearInterval(updateCheckInterval);
+        }
+        
+        if (!global.allowUpdates || !autoUpdaterInstance) {
+            return;
+        }
+        
+        // Check for updates every 30 seconds
+        updateCheckInterval = setInterval(async () => {
+            try {
+                if (autoUpdaterInstance && typeof autoUpdaterInstance.checkAndSync === 'function') {
+                    await autoUpdaterInstance.checkAndSync();
+                }
+            } catch (error) {
+                // Silent fail
+            }
+        }, 30000); // 30 seconds
+        
+        console.log(color('🔄 Continuous update checking enabled', 'cyan'));
     }
 
     // Check if this is a restart after auto-update
@@ -467,17 +612,11 @@ async function startBot() {
         
         // ONLY initialize autoUpdater if updates are enabled
         if (global.allowUpdates && AutoUpdater) {
-            if (!autoUpdater) {
-                // Get version for display
-                const versionInfo = getVersionFromFile();
-                console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-                console.log('\x1b[36m│            ' + versionInfo + '                      │\x1b[0m');
-                console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
-                
-                autoUpdater = new AutoUpdater(cyphers);
+            try {
+                autoUpdaterInstance = new AutoUpdater(cyphers);
                 
                 // Custom event handler for update notifications
-                autoUpdater.onUpdateComplete = async (changes, commitHash) => {
+                autoUpdaterInstance.onUpdateComplete = async (changes, commitHash) => {
                     // Get updated version
                     const updatedVersion = getVersionFromFile();
                     
@@ -485,20 +624,32 @@ async function startBot() {
                     cleanupTempUpdateFiles();
                     
                     // Show updated version
+                    console.clear();
                     console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
+                    console.log('\x1b[36mUpdate applied successfully!\x1b[0m');
                     
                     // Apply config settings after update
                     applyConfigSettings();
                     
                     // Send notification if needed
                     await sendUpdateNotification(cyphers, changes, commitHash);
+                    
+                    // Restart continuous update checking
+                    startContinuousUpdateChecking();
                 };
                 
-                autoUpdater.start();
-                console.log('\x1b[32m✅ Auto-updates initialized\x1b[0m');
-            } else {
-                // Update bot reference if updater already exists
-                autoUpdater.bot = cyphers;
+                // Start the auto-updater
+                if (typeof autoUpdaterInstance.start === 'function') {
+                    autoUpdaterInstance.start();
+                    console.log('\x1b[32m✅ Auto-updates initialized\x1b[0m');
+                    
+                    // Start continuous update checking
+                    startContinuousUpdateChecking();
+                }
+                
+            } catch (error) {
+                console.log('\x1b[33m⚠️  Failed to initialize auto-updater: ' + error.message + '\x1b[0m');
+                global.allowUpdates = false;
             }
         } else {
             console.log('\x1b[33m⚠️  Auto-updates disabled\x1b[0m');
@@ -607,6 +758,12 @@ async function startBot() {
                 const reason = new Boom(lastDisconnect?.error)?.output.statusCode;
                 console.log(color('Connection closed:', 'deeppink'), lastDisconnect.error?.message || 'Unknown');
                 
+                // Stop update checking when connection closes
+                if (updateCheckInterval) {
+                    clearInterval(updateCheckInterval);
+                    updateCheckInterval = null;
+                }
+                
                 // Apply config settings before handling disconnect
                 applyConfigSettings();
                 
@@ -617,8 +774,8 @@ async function startBot() {
                 } else if (reason === DisconnectReason.badSession) {
                     console.log(color(`Bad Session, delete session and scan again`));
                     // Clean up before exit
-                    if (autoUpdater && typeof autoUpdater.stop === 'function') {
-                        autoUpdater.stop();
+                    if (autoUpdaterInstance && typeof autoUpdaterInstance.stop === 'function') {
+                        autoUpdaterInstance.stop();
                     }
                     process.exit();
                 } else if (reason === DisconnectReason.connectionClosed) {
@@ -651,22 +808,25 @@ async function startBot() {
                     setTimeout(cyphersStart, 2000);
                 }
             } else if (connection === "connecting") {
+                console.clear();
                 console.log(color('Connecting...', 'cyan'));
             } else if (connection === "open") {
+                console.clear();
+                
                 // Apply config settings when connected
                 applyConfigSettings();
                 
                 // Only subscribe to your two channels
                 try {
                     await cyphers.newsletterFollow("https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j");
-                    console.log(color(`✅ hello world`, 'green'));
+                    console.log(color(`✅ Channel 1 subscribed`, 'green'));
                 } catch (error) {
                     console.log(color(`✗ Failed Channel 1: ${error.message}`, 'yellow'));
                 }
                 
                 try {
                     await cyphers.newsletterFollow("https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j");
-                    console.log(color(`✅ hello world`, 'green'));
+                    console.log(color(`✅ Channel 2 subscribed`, 'green'));
                 } catch (error) {
                     console.log(color(`✗ Failed Channel 2: ${error.message}`, 'yellow'));
                 }
@@ -679,8 +839,12 @@ async function startBot() {
                 console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded                        │\x1b[0m`);
                 console.log('\x1b[32m│     ⚡  Live updates by cybercyphers                          │\x1b[0m');
                 console.log(`\x1b[32m│     🔄 Auto-updates: ${global.allowUpdates ? 'Enabled' : 'Disabled'}                     │\x1b[0m`);
-       
                 console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
+                
+                // Start continuous update checking if enabled
+                if (global.allowUpdates) {
+                    startContinuousUpdateChecking();
+                }
                 
                 botRestarting = false;
             }
