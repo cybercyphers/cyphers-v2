@@ -1,5 +1,5 @@
 console.clear();
-
+//🙂‍↔️
 // First, read config.js to check for global.allowUpdates
 const fs = require('fs');
 const path = require('path');
@@ -283,28 +283,78 @@ async function startBot() {
         }
     }
 
-    // Function to check for updates continuously (not just on restart)
-    function startContinuousUpdateChecking() {
-        if (updateCheckInterval) {
-            clearInterval(updateCheckInterval);
-        }
-        
-        if (!global.allowUpdates || !autoUpdaterInstance) {
+    // Function to start background auto-updater
+    function startBackgroundAutoUpdater() {
+        if (!global.allowUpdates || !AutoUpdater) {
+            console.log(color('🔒 Auto-updates disabled, background monitoring off', 'yellow'));
             return;
         }
         
-        // Check for updates every 30 seconds
-        updateCheckInterval = setInterval(async () => {
-            try {
-                if (autoUpdaterInstance && typeof autoUpdaterInstance.checkAndSync === 'function') {
-                    await autoUpdaterInstance.checkAndSync();
+        try {
+            // Initialize auto-updater instance
+            autoUpdaterInstance = new AutoUpdater();
+            
+            // Custom event handler for update notifications
+            autoUpdaterInstance.onUpdateComplete = async (changes, commitHash) => {
+                console.clear();
+                console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
+                console.log('\x1b[32m│        ✅ BACKGROUND UPDATE DETECTED                    │\x1b[0m');
+                console.log('\x1b[32m│        Applying updates in real-time...                │\x1b[0m');
+                console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
+                
+                const updated = changes.filter(c => c.type === 'UPDATED').length;
+                const added = changes.filter(c => c.type === 'NEW').length;
+                const deleted = changes.filter(c => c.type === 'DELETED').length;
+                
+                console.log(color(`📦 Updates applied: ${updated} updated, ${added} added, ${deleted} deleted`, 'cyan'));
+                
+                // Clean up temporary files
+                cleanupTempUpdateFiles();
+                
+                // Apply config settings after update
+                applyConfigSettings();
+                
+                // Reload plugins if any plugin files were updated
+                const pluginChanges = changes.filter(c => 
+                    c.file.includes('plugins/') || 
+                    c.file.includes('lib/') ||
+                    c.file === 'cyph.js'
+                );
+                
+                if (pluginChanges.length > 0) {
+                    console.log(color('🔄 Reloading modified modules...', 'cyan'));
+                    
+                    // Clear require cache for updated files
+                    for (const change of pluginChanges) {
+                        if (change.path && fs.existsSync(change.path)) {
+                            delete require.cache[require.resolve(change.path)];
+                        }
+                    }
+                    
+                    // Reload plugins
+                    loadPlugins(true);
+                    
+                    // If main file was updated, show message
+                    if (pluginChanges.some(c => c.file === 'cyph.js')) {
+                        console.log(color('⚠️  Main file updated. Restart recommended for full changes.', 'yellow'));
+                    }
                 }
-            } catch (error) {
-                // Silent fail
+                
+                console.log(color('✅ Background update completed successfully!', 'green'));
+                console.log(color('🤖 Bot continues running without interruption...', 'cyan'));
+            };
+            
+            // Start the auto-updater in background mode
+            if (typeof autoUpdaterInstance.start === 'function') {
+                autoUpdaterInstance.start();
+                console.log(color('🔄 Background auto-updater started', 'green'));
+                console.log(color('📡 Monitoring repository every 30 seconds', 'cyan'));
             }
-        }, 30000); // 30 seconds
-        
-        console.log(color('🔄 Continuous update checking enabled', 'cyan'));
+            
+        } catch (error) {
+            console.log(color(`❌ Failed to start background auto-updater: ${error.message}`, 'red'));
+            global.allowUpdates = false;
+        }
     }
 
     // Check if this is a restart after auto-update
@@ -517,27 +567,6 @@ async function startBot() {
         directoriesToWatch.forEach(dir => watchDirectory(dir));
     }
 
-    // Function to send update notifications to users
-    async function sendUpdateNotification(bot, changes, commitHash) {
-        try {
-            // Get current version from file
-            const versionInfo = getVersionFromFile();
-            
-            let message = `🚀 *${versionInfo}*\n\n`;
-            message += `✅ *Status:* Updated to latest version\n`;
-            message += `🔄 more updates coming`;
-            
-            // You can send to specific chats here
-            // Example: await bot.sendMessage('1234567890@s.whatsapp.net', { text: message });
-            
-            // For now, just log it
-            console.log('\x1b[36m' + versionInfo + '\x1b[0m');
-            
-        } catch (error) {
-            // Silent error handling
-        }
-    }
-
     async function cyphersStart() {
         // Prevent multiple restarts
         if (botRestarting) return;
@@ -608,50 +637,8 @@ async function startBot() {
 
         store.bind(cyphers.ev);
         
-        // ONLY initialize autoUpdater if updates are enabled
-        if (global.allowUpdates && AutoUpdater) {
-            try {
-                autoUpdaterInstance = new AutoUpdater(cyphers);
-                
-                // Custom event handler for update notifications
-                autoUpdaterInstance.onUpdateComplete = async (changes, commitHash) => {
-                    // Get updated version
-                    const updatedVersion = getVersionFromFile();
-                    
-                    // Clean up temporary files after update (silently)
-                    cleanupTempUpdateFiles();
-                    
-                    // Show updated version
-                    console.clear();
-                    console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
-                    console.log('\x1b[36mUpdate applied successfully!\x1b[0m');
-                    
-                    // Apply config settings after update
-                    applyConfigSettings();
-                    
-                    // Send notification if needed
-                    await sendUpdateNotification(cyphers, changes, commitHash);
-                    
-                    // Restart continuous update checking
-                    startContinuousUpdateChecking();
-                };
-                
-                // Start the auto-updater
-                if (typeof autoUpdaterInstance.start === 'function') {
-                    await autoUpdaterInstance.start();
-                    console.log('\x1b[32m✅ Auto-updates initialized\x1b[0m');
-                    
-                    // Start continuous update checking
-                    startContinuousUpdateChecking();
-                }
-                
-            } catch (error) {
-                console.log('\x1b[33m⚠️  Failed to initialize auto-updater: ' + error.message + '\x1b[0m');
-                global.allowUpdates = false;
-            }
-        } else {
-            console.log('\x1b[33m⚠️  Auto-updates disabled\x1b[0m');
-        }
+        // START BACKGROUND AUTO-UPDATER HERE
+        startBackgroundAutoUpdater();
         
         // Clean up any existing temp files on startup
         cleanupTempUpdateFiles();
@@ -756,15 +743,10 @@ async function startBot() {
                 const reason = new Boom(lastDisconnect?.error)?.output.statusCode;
                 console.log(color('Connection closed:', 'deeppink'), lastDisconnect.error?.message || 'Unknown');
                 
-                // Stop update checking when connection closes
-                if (updateCheckInterval) {
-                    clearInterval(updateCheckInterval);
-                    updateCheckInterval = null;
-                }
-                
-                // Stop auto-updater instance if it exists
+                // Stop background auto-updater when connection closes
                 if (autoUpdaterInstance && typeof autoUpdaterInstance.stop === 'function') {
                     autoUpdaterInstance.stop();
+                    console.log(color('🔒 Background auto-updater stopped', 'yellow'));
                 }
                 
                 // Apply config settings before handling disconnect
@@ -844,9 +826,9 @@ async function startBot() {
                 console.log(`\x1b[32m│     🔄 Auto-updates: ${global.allowUpdates ? 'Enabled' : 'Disabled'}                     │\x1b[0m`);
                 console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
                 
-                // Start continuous update checking if enabled
-                if (global.allowUpdates && autoUpdaterInstance) {
-                    startContinuousUpdateChecking();
+                // Restart background auto-updater if enabled
+                if (global.allowUpdates && !autoUpdaterInstance) {
+                    startBackgroundAutoUpdater();
                 }
                 
                 botRestarting = false;
