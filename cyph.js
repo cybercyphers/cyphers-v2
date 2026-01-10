@@ -2,7 +2,7 @@ console.clear();
 console.log('Starting...');
 
 // Import agreement system FIRST
-const agreementModule = require('./lib/agreement');
+const agreementModule = require('./lib/agreements');
 
 // Simple agreement check function
 async function checkAndSetup() {
