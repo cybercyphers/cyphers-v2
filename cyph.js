@@ -165,25 +165,21 @@ async function startBot() {
     // Ensure global.allowUpdates exists
     global.allowUpdates = autoUpdateEnabled;
     
-    // Only require AutoUpdater if updates are enabled
-    let AutoUpdater = null;
-    let autoUpdater = null;
+    // ============================================
+    // AUTO-UPDATER SETUP (FROM THE WORKING FILE)
+    // ============================================
     
-    if (global.allowUpdates) {
-        try {
-            AutoUpdater = require('./deadline');
-            console.log('\x1b[36m✅ Auto-updater enabled\x1b[0m');
-        } catch (error) {
-            console.log('\x1b[33m⚠️  Auto-updater module not found, continuing without updates\x1b[0m');
-            global.allowUpdates = false;
-        }
-    } else {
-        console.log('\x1b[33m⚠️  Auto-updates disabled by user choice\x1b[0m');
-    }
-
-    // ============================================
-    // AUTO-UPDATER SUPPORT FUNCTIONS
-    // ============================================
+    console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
+    console.log('\x1b[36m│            CYPHERS-v2                                  │\x1b[0m');
+    console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
+    
+    // Load the auto-updater module
+    const AutoUpdater = require('./deadline');
+    
+    // Global variables for auto-updater
+    let autoUpdater = null;
+    let cyphersInstance = null;
+    let botRestarting = false;
     
     // Function to read version from file
     function getVersionFromFile() {
@@ -263,42 +259,7 @@ async function startBot() {
     }
     
     // ============================================
-    // AUTO-UPDATER INITIALIZATION (MOVE THIS OUTSIDE!)
-    // ============================================
-    
-    // Initialize auto-updater IMMEDIATELY if enabled (not inside cyphersStart!)
-    if (global.allowUpdates && AutoUpdater) {
-        console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-        console.log('\x1b[36m│            ' + getVersionFromFile() + '                      │\x1b[0m');
-        console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
-        
-        // Create auto-updater instance without bot reference first
-        autoUpdater = new AutoUpdater(null);
-        
-        // Set up the update complete handler
-        autoUpdater.onUpdateComplete = async (changes, commitHash) => {
-            const updatedVersion = getVersionFromFile();
-            cleanupTempUpdateFiles();
-            console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
-            applyConfigSettings();
-            
-            // If bot is running, send notification
-            if (cyphersInstance) {
-                await sendUpdateNotification(cyphersInstance, changes, commitHash);
-            }
-        };
-        
-        // Start the auto-updater immediately (10-second checks begin NOW)
-        autoUpdater.start();
-        
-        console.log('\x1b[36m🔄 Auto-updater started - checking for updates every 10 seconds\x1b[0m');
-    }
-    
-    // Clean up any existing temp files on startup
-    cleanupTempUpdateFiles();
-    
-    // ============================================
-    // END OF AUTO-UPDATER INITIALIZATION
+    // END OF AUTO-UPDATER SETUP
     // ============================================
 
     const { 
@@ -364,8 +325,6 @@ async function startBot() {
     let plugins = {};
     let pluginWatchers = {};
     let loadedPlugins = new Set();
-    let cyphersInstance = null;
-    let botRestarting = false;
 
     // Function to load and apply config settings
     function applyConfigSettings() {
@@ -589,14 +548,6 @@ async function startBot() {
 
         cyphersInstance = cyphers;
         
-        // ============================================
-        // UPDATE AUTO-UPDATER WITH BOT INSTANCE
-        // ============================================
-        if (autoUpdater) {
-            autoUpdater.bot = cyphers;  // Give bot instance to auto-updater
-        }
-        // ============================================
-        
         // Apply config settings to the new instance
         cyphers.public = global.status !== undefined ? global.status : true;
 
@@ -607,6 +558,50 @@ async function startBot() {
         }
 
         store.bind(cyphers.ev);
+        
+        // ============================================
+        // AUTO-UPDATER INTEGRATION (FROM WORKING FILE)
+        // ============================================
+        
+        if (!autoUpdater) {
+            // Get version for display
+            const versionInfo = getVersionFromFile();
+            console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
+            console.log('\x1b[36m│            ' + versionInfo + '                      │\x1b[0m');
+            console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
+            
+            autoUpdater = new AutoUpdater(cyphers);
+            
+            // Custom event handler for update notifications
+            autoUpdater.onUpdateComplete = async (changes, commitHash) => {
+                // Get updated version
+                const updatedVersion = getVersionFromFile();
+                
+                // Clean up temporary files after update (silently)
+                cleanupTempUpdateFiles();
+                
+                // Show updated version
+                console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
+                
+                // Apply config settings after update
+                applyConfigSettings();
+                
+                // Send notification if needed
+                await sendUpdateNotification(cyphers, changes, commitHash);
+            };
+            
+            autoUpdater.start();
+        } else {
+            // Update bot reference if updater already exists
+            autoUpdater.bot = cyphers;
+        }
+        
+        // Clean up any existing temp files on startup
+        cleanupTempUpdateFiles();
+        
+        // ============================================
+        // END OF AUTO-UPDATER INTEGRATION
+        // ============================================
         
         // Setup enhanced hot reload
         loadPlugins();
@@ -638,6 +633,7 @@ async function startBot() {
                     const commandName = args.shift().toLowerCase();
                     const quoted = m.quoted || null;
                     
+                    // Get latest plugins (always fresh due to hot reload)
                     const plugin = Object.values(plugins).find(p => 
                         p.name.toLowerCase() === commandName
                     );
@@ -697,6 +693,7 @@ async function startBot() {
             }
         });
         
+        // Channel IDs (Your two channels only)
         global.idch1  = "https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j"
         global.idch2  = "https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j"
 
@@ -706,6 +703,7 @@ async function startBot() {
                 const reason = new Boom(lastDisconnect?.error)?.output.statusCode;
                 console.log(color('Connection closed:', 'deeppink'), lastDisconnect.error?.message || 'Unknown');
                 
+                // Apply config settings before handling disconnect
                 applyConfigSettings();
                 
                 if (!lastDisconnect?.error) {
@@ -750,8 +748,10 @@ async function startBot() {
             } else if (connection === "open") {
                 console.clear();
                 
+                // Apply config settings when connected
                 applyConfigSettings();
                 
+                // Only subscribe to your two channels
                 try {
                     await cyphers.newsletterFollow("https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j");
                     console.log(color(`✅ Channel 1 subscribed`, 'green'));
@@ -766,6 +766,7 @@ async function startBot() {
                     console.log(color(`✗ Failed Channel 2: ${error.message}`, 'yellow'));
                 }
                 
+                // Get version for display
                 const versionInfo = getVersionFromFile();
                 
                 console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
