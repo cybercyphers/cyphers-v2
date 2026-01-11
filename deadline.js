@@ -3,14 +3,14 @@ const path = require('path');
 const { exec, spawn } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-//
+
 class AutoUpdater {
     constructor(botInstance = null) {
         this.bot = botInstance;
         this.repo = 'cybercyphers/cyphers-v2';
         this.repoUrl = 'https://github.com/cybercyphers/cyphers-v2.git';
         this.branch = 'main';
-        this.checkInterval = 3000; // 3 seconds
+        this.checkInterval = 30000; // 30 seconds
         this.ignoredPatterns = [
             'node_modules',
             'package-lock.json',
@@ -99,7 +99,6 @@ class AutoUpdater {
             }
             
             if (latestCommit !== this.lastCommit) {
-                console.log('\x1b[33m🔄 Auto-Updater: Update found! Downloading...\x1b[0m');
                 await this.applyUpdate(latestCommit);
             }
         } catch (error) {
@@ -119,7 +118,7 @@ class AutoUpdater {
                 const needsRestart = await this.applyChanges(tempDir, changes);
                 this.lastCommit = newCommit;
                 
-                // Report changes
+                // Only show the summary
                 const updated = changes.filter(c => c.type === 'UPDATED').length;
                 const added = changes.filter(c => c.type === 'NEW').length;
                 
@@ -137,7 +136,6 @@ class AutoUpdater {
                     console.log('\x1b[32m✅ Auto-Updater: Update applied (hot reload)\x1b[0m');
                 }
             } else {
-                console.log('\x1b[33mℹ️ Auto-Updater: No changes to apply\x1b[0m');
                 this.lastCommit = newCommit;
             }
             
