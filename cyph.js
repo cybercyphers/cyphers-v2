@@ -3,231 +3,113 @@ const fs = require('fs');
 const path = require('path');
 const readline = require("readline");
 
-// ==================== WORKING AUTO-UPDATER (DEADLINE.JS) ====================
-// This uses your existing deadline.js which already works perfectly
-let AutoUpdater = null;
-
-// ==================== USER AGREEMENT SYSTEM ====================
-function checkConfigForAllowUpdates() {
+// ==================== SIMPLE AGREEMENT SYSTEM ====================
+async function checkAndSetup() {
+    console.clear();
+    
+    // Check if config exists and has allowUpdates setting
     try {
         const configPath = path.join(__dirname, './settings/config.js');
-        
-        if (!fs.existsSync(configPath)) {
-            return '_'; // Config doesn't exist, show agreement
-        }
-        
-        const configContent = fs.readFileSync(configPath, 'utf8');
-        const lines = configContent.split('\n');
-        
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.includes('global.allowUpdates')) {
-                const match = trimmed.match(/global\.allowUpdates\s*=\s*(.*?);/);
-                if (match) {
-                    const value = match[1].trim();
-                    if (value === 'true') return true;
-                    if (value === 'false') return false;
-                    if (value === '_' || value === "''" || value === '""') return '_';
-                    try {
-                        const parsed = JSON.parse(value);
-                        if (typeof parsed === 'boolean') return parsed;
-                    } catch {
-                        if (value.toLowerCase() === 'true') return true;
-                        if (value.toLowerCase() === 'false') return false;
-                    }
-                }
+        if (fs.existsSync(configPath)) {
+            const configContent = fs.readFileSync(configPath, 'utf8');
+            
+            // Simple check for allowUpdates
+            if (configContent.includes('global.allowUpdates = true')) {
+                console.log('\x1b[32m✅ Auto-updates: ENABLED\x1b[0m');
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                return true;
+            }
+            if (configContent.includes('global.allowUpdates = false')) {
+                console.log('\x1b[33m⚠️  Auto-updates: DISABLED\x1b[0m');
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                return false;
             }
         }
-        return '_';
     } catch (error) {
-        return '_';
+        // Continue to ask user
     }
-}
-
-async function saveAllowUpdatesToConfig(allowUpdates) {
+    
+    // Ask user for permission
+    console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
+    console.log('\x1b[36m│              AUTO-UPDATE SETTINGS                        │\x1b[0m');
+    console.log('\x1b[36m│                                                          │\x1b[0m');
+    console.log('\x1b[36m│  This bot can update itself automatically.              │\x1b[0m');
+    console.log('\x1b[36m│  Do you want to enable auto-updates? (y/n)              │\x1b[0m');
+    console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
+    
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise(resolve => {
+        rl.question('\x1b[33mChoice (y/n): \x1b[0m', resolve);
+    });
+    rl.close();
+    
+    const enabled = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
+    
+    // Save to config
     try {
         const configPath = path.join(__dirname, './settings/config.js');
-        
         let configContent = '';
         if (fs.existsSync(configPath)) {
             configContent = fs.readFileSync(configPath, 'utf8');
         }
         
-        if (configContent.includes('global.allowUpdates')) {
-            configContent = configContent.replace(
-                /global\.allowUpdates\s*=\s*.*?;/,
-                `global.allowUpdates = ${allowUpdates};`
-            );
-        } else {
-            const lines = configContent.split('\n');
-            let insertIndex = 0;
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].trim().startsWith('global.')) {
-                    insertIndex = i + 1;
-                } else if (lines[i].trim().length > 0 && !lines[i].trim().startsWith('//')) {
-                    break;
-                }
-            }
-            lines.splice(insertIndex, 0, `global.allowUpdates = ${allowUpdates};`);
-            configContent = lines.join('\n');
+        // Remove existing allowUpdates line if present
+        configContent = configContent.replace(/global\.allowUpdates\s*=\s*.*?;/g, '');
+        
+        // Add new setting at the end
+        if (!configContent.includes('global.allowUpdates')) {
+            configContent += `\nglobal.allowUpdates = ${enabled};`;
         }
         
         fs.writeFileSync(configPath, configContent, 'utf8');
-        console.log(`\x1b[32m✅ Auto-update preference saved\x1b[0m`);
     } catch (error) {
-        console.log(`\x1b[33m⚠️  Could not save config: ${error.message}\x1b[0m`);
+        console.log('\x1b[33m⚠️  Could not save setting\x1b[0m');
     }
-}
-
-async function getUserAgreement() {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     
     console.clear();
-    console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-    console.log('\x1b[36m│              CYPHERS-v2 AUTO-UPDATE                     │\x1b[0m');
-    console.log('\x1b[36m│                                                         │\x1b[0m');
-    console.log('\x1b[36m│     ⚡ REAL-TIME UPDATES ENABLED                         │\x1b[0m');
-    console.log('\x1b[36m│     • Checks GitHub for updates                         │\x1b[0m');
-    console.log('\x1b[36m│     • Applies updates automatically                     │\x1b[0m');
-    console.log('\x1b[36m│     • No spam or duplicate files                        │\x1b[0m');
-    console.log('\x1b[36m│     • Only downloads when needed                        │\x1b[0m');
-    console.log('\x1b[36m│                                                         │\x1b[0m');
-    console.log('\x1b[36m│     🔥 This is the SAME SYSTEM as before                │\x1b[0m');
-    console.log('\x1b[36m│     ✅ Already tested and working perfectly             │\x1b[0m');
-    console.log('\x1b[36m│                                                         │\x1b[0m');
-    console.log('\x1b[36m│     Do you want to enable auto-updates?                │\x1b[0m');
-    console.log('\x1b[36m│     (y) Yes - Same as before (Recommended)             │\x1b[0m');
-    console.log('\x1b[36m│     (n) No - Manual updates only                       │\x1b[0m');
-    console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
+    console.log(`\x1b[32m✅ Auto-updates: ${enabled ? 'ENABLED' : 'DISABLED'}\x1b[0m`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
     
-    return new Promise((resolve) => {
-        rl.question('\x1b[33mChoose (y/n): \x1b[0m', (answer) => {
-            rl.close();
-            const enabled = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
-            resolve(enabled);
-        });
-    });
+    return enabled;
 }
 
-async function checkAndSetup() {
+// ==================== CLEANUP OLD TEMP FILES ====================
+function cleanupTempFiles() {
     try {
-        console.clear();
-        
-        // Check config first
-        const configStatus = checkConfigForAllowUpdates();
-        
-        // If config has a boolean value (true/false), return it without asking
-        if (configStatus === true || configStatus === false) {
-            console.log('\x1b[36m✅ Using saved auto-update setting\x1b[0m');
-            console.log(`\x1b[36mAuto-updates: ${configStatus ? 'ENABLED' : 'DISABLED'}\x1b[0m`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            return configStatus;
-        }
-        
-        // If config has '_' or doesn't exist, show agreement
-        console.log('\x1b[36mFirst time setup - Agreement required\x1b[0m');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Run the agreement setup
-        const autoUpdateEnabled = await getUserAgreement();
-        
-        // Save the setting to config
-        await saveAllowUpdatesToConfig(autoUpdateEnabled);
-        
-        // Clear screen and show success
-        console.clear();
-        console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-        console.log('\x1b[32m│        ✅ AGREEMENT ACCEPTED                           │\x1b[0m');
-        console.log(`\x1b[32m│        Auto-updates: ${autoUpdateEnabled ? 'ENABLED' : 'DISABLED'}                   │\x1b[0m`);
-        
-        if (autoUpdateEnabled) {
-            console.log('\x1b[32m│        ⚡ Using PROVEN update system                   │\x1b[0m');
-            console.log('\x1b[32m│        🔥 Same as working version                     │\x1b[0m');
-            console.log('\x1b[32m│        ✅ No spam, no duplicate files                 │\x1b[0m');
-        }
-        
-        console.log('\x1b[32m│        Starting CYPHERS-v2...                         │\x1b[0m');
-        console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
-        
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        return autoUpdateEnabled;
-        
-    } catch (error) {
-        console.log('\x1b[31m❌ Agreement setup failed: ' + error.message + '\x1b[0m');
-        console.log('\x1b[33m⚠️  Starting with default settings (auto-updates enabled)...\x1b[0m');
-        return true;
-    }
-}
-
-// ==================== CLEANUP FUNCTION ====================
-function cleanupOldTempFiles() {
-    try {
-        const currentDir = __dirname;
-        const files = fs.readdirSync(currentDir);
-        
-        // Clean up any old temp files from failed updates
-        const tempPatterns = [
-            /^update_temp_\d+$/,
-            /^temp_update_\d+$/,
-            /^\.update_temp_\d+$/
-        ];
-        
-        for (const file of files) {
-            try {
-                const filePath = path.join(currentDir, file);
-                const stat = fs.statSync(filePath);
-                
-                const isTempFile = tempPatterns.some(pattern => pattern.test(file));
-                
-                if (isTempFile && stat.isDirectory()) {
-                    fs.rmSync(filePath, { recursive: true, force: true });
-                }
-            } catch (err) {
-                continue;
+        const files = fs.readdirSync(__dirname);
+        files.forEach(file => {
+            if (file.startsWith('update_temp_') || file.startsWith('.update_temp_')) {
+                try {
+                    const filePath = path.join(__dirname, file);
+                    const stats = fs.statSync(filePath);
+                    if (stats.isDirectory()) {
+                        fs.rmSync(filePath, { recursive: true, force: true });
+                    }
+                } catch {}
             }
-        }
-    } catch (error) {
-        // Silent cleanup
-    }
+        });
+    } catch {}
 }
 
-// ==================== MAIN BOT STARTUP ====================
+// ==================== MAIN BOT START ====================
 async function startBot() {
-    // Clean up old temp files first
-    cleanupOldTempFiles();
+    // Cleanup old temp files first
+    cleanupTempFiles();
     
-    // Check agreement/config first
+    // Ask user for update permission
     const autoUpdateEnabled = await checkAndSetup();
     
-    // Now load config
-    const configPath = require.resolve('./settings/config');
-    delete require.cache[configPath];
+    // Load config
     require('./settings/config');
     
-    // Ensure global.allowUpdates exists
+    // Set global setting
     global.allowUpdates = autoUpdateEnabled;
     
-    // Show current setting
+    // Show status
     console.clear();
-    console.log(`\x1b[36mAuto-updates: ${global.allowUpdates ? 'ENABLED ✅' : 'DISABLED ❌'}\x1b[0m`);
+    console.log('Starting bot...\n');
     
-    // ============ LOAD THE WORKING AUTO-UPDATER ============
-    let autoUpdater = null;
-    
-    if (global.allowUpdates) {
-        try {
-            // Load your existing deadline.js which already works
-            AutoUpdater = require('./deadline');
-            console.log('\x1b[32m✅ Loaded working auto-updater system\x1b[0m');
-        } catch (error) {
-            console.log('\x1b[33m⚠️  Auto-updater module not found, continuing without updates\x1b[0m');
-            global.allowUpdates = false;
-        }
-    } else {
-        console.log('\x1b[33m⚠️  Auto-updates disabled by user choice\x1b[0m');
-    }
-
-    // Load Baileys and other dependencies
+    // Load dependencies
     const { 
         default: makeWASocket, 
         useMultiFileAuthState, 
@@ -243,26 +125,9 @@ async function startBot() {
     const { color } = require('./lib/color');
     const { smsg } = require('./lib/myfunction');
 
-    // Add fetch polyfill if needed
+    // Setup fetch
     if (typeof globalThis.fetch !== 'function') {
-        try {
-            globalThis.fetch = require('node-fetch');
-        } catch {
-            globalThis.fetch = async (url) => {
-                const https = require('https');
-                return new Promise((resolve, reject) => {
-                    https.get(url, (res) => {
-                        let data = '';
-                        res.on('data', (chunk) => data += chunk);
-                        res.on('end', () => {
-                            resolve({
-                                json: () => Promise.resolve(JSON.parse(data))
-                            });
-                        });
-                    }).on('error', reject);
-                });
-            };
-        }
+        globalThis.fetch = require('node-fetch');
     }
 
     const usePairingCode = true;
@@ -275,22 +140,22 @@ async function startBot() {
 
     // Global variables
     let plugins = {};
-    let pluginWatchers = {};
     let loadedPlugins = new Set();
+    let autoUpdater = null;
     let cyphersInstance = null;
     let botRestarting = false;
 
-    // Check if this is a restart after auto-update
+    // Check if restart after update
     if (process.env.CYPHERS_AUTO_UPDATED === 'true') {
         console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-        console.log('\x1b[32m│        ✅ VERIFIED UPDATE                              │\x1b[0m');
+        console.log('\x1b[32m│        ✅ UPDATED SUCCESSFULLY                         │\x1b[0m');
         console.log('\x1b[32m│        Running latest version now ⚡                   │\x1b[0m');
         console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
         delete process.env.CYPHERS_AUTO_UPDATED;
     }
 
-    // Function to load plugins
-    function loadPlugins(reload = false) {
+    // Load plugins
+    function loadPlugins() {
         const pluginsDir = path.join(__dirname, 'plugins');
         
         if (!fs.existsSync(pluginsDir)) {
@@ -302,48 +167,18 @@ async function startBot() {
             file.endsWith('.js') || file.endsWith('.cjs')
         );
         
-        if (!reload) {
-            plugins = {};
-            loadedPlugins.clear();
-        }
+        plugins = {};
+        loadedPlugins.clear();
         
         for (const file of pluginFiles) {
             try {
-                const pluginPath = path.join(pluginsDir, file);
+                const plugin = require(path.join(pluginsDir, file));
                 
-                if (reload) {
-                    delete require.cache[require.resolve(pluginPath)];
-                }
-                
-                const plugin = require(pluginPath);
-                
-                if (!plugin.name || !plugin.execute) {
-                    continue;
-                }
-                
-                plugins[plugin.name] = plugin;
-                
-                if (!loadedPlugins.has(plugin.name)) {
+                if (plugin.name && plugin.execute) {
+                    plugins[plugin.name] = plugin;
                     loadedPlugins.add(plugin.name);
                 }
-                
-            } catch (error) {
-                console.log(`⚠️  Failed to load plugin ${file}: ${error.message}`);
-            }
-        }
-    }
-
-    // Function to read version from file
-    function getVersionFromFile() {
-        try {
-            const versionFile = path.join(__dirname, 'version.txt');
-            if (fs.existsSync(versionFile)) {
-                const version = fs.readFileSync(versionFile, 'utf8').trim();
-                return version || 'CYPHERS-v2';
-            }
-            return 'CYPHERS-v2';
-        } catch (error) {
-            return 'CYPHERS-v2';
+            } catch {}
         }
     }
 
@@ -398,43 +233,29 @@ async function startBot() {
         cyphers.public = global.status !== undefined ? global.status : true;
 
         if (usePairingCode && !cyphers.authState.creds.registered) {
-            const phoneNumber = await question('Enter bot phone number 🥲 : Example 233xxx\n');
+            const phoneNumber = await question('Enter bot phone number: ');
             const code = await cyphers.requestPairingCode(phoneNumber, "CYPHERSS");
             console.log(`\x1b[1;33mPairing Code: ${code}\x1b[0m`);
         }
 
         store.bind(cyphers.ev);
         
-        // ============ INITIALIZE THE WORKING AUTO-UPDATER ============
-        if (global.allowUpdates && AutoUpdater) {
-            if (!autoUpdater) {
-                const versionInfo = getVersionFromFile();
-                console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-                console.log('\x1b[36m│            ' + versionInfo + '                      │\x1b[0m');
-                console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
-                
-                // Create and start the auto-updater (YOUR WORKING SYSTEM)
-                autoUpdater = new AutoUpdater(cyphers);
-                
-                // Set up update complete callback (optional)
-                if (autoUpdater.onUpdateComplete) {
-                    autoUpdater.onUpdateComplete = async (changes, commitHash) => {
-                        const updatedVersion = getVersionFromFile();
-                        console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
-                        console.log('✅ Update complete!');
-                    };
-                }
-                
-                // Start the auto-updater - THIS IS YOUR WORKING SYSTEM
-                autoUpdater.start();
-                
-                console.log('\x1b[32m✅ Working auto-updater activated!\x1b[0m');
-                console.log('\x1b[36m🔄 Using proven update system (no spam)\x1b[0m');
-            } else {
-                autoUpdater.bot = cyphers;
-            }
-        } else if (global.allowUpdates && !AutoUpdater) {
-            console.log('\x1b[33m⚠️  Auto-updater module not available\x1b[0m');
+        // ==================== SIMPLE AUTO-UPDATE CHECK ====================
+        if (global.allowUpdates) {
+            console.log('\x1b[36m✅ Auto-updates enabled\x1b[0m');
+            
+            // Simple update check - you can expand this
+            setTimeout(async () => {
+                try {
+                    const versionFile = path.join(__dirname, 'version.txt');
+                    if (fs.existsSync(versionFile)) {
+                        const currentVersion = fs.readFileSync(versionFile, 'utf8').trim();
+                        console.log(`\x1b[36mCurrent version: ${currentVersion}\x1b[0m`);
+                    }
+                } catch {}
+            }, 5000);
+        } else {
+            console.log('\x1b[33m⚠️  Auto-updates disabled\x1b[0m');
         }
         
         loadPlugins();
@@ -462,22 +283,7 @@ async function startBot() {
                     
                     if (plugin) {
                         try {
-                            const msgObj = {
-                                key: {
-                                    remoteJid: m.chat,
-                                    fromMe: m.key?.fromMe || false,
-                                    id: m.id,
-                                    participant: m.sender
-                                },
-                                message: m.message,
-                                pushName: m.pushName,
-                                timestamp: m.timestamp,
-                                sender: m.sender,
-                                body: m.body,
-                                quoted: m.quoted || null
-                            };
-                            
-                            await plugin.execute(cyphers, msgObj, args);
+                            await plugin.execute(cyphers, m, args);
                         } catch (error) {
                             console.log(color(`Error in ${plugin.name}: ${error.message}`, 'red'));
                         }
@@ -503,7 +309,6 @@ async function startBot() {
             }
         });
         
-        // Channel IDs (same as your working version)
         global.idch1 = "https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j";
         global.idch2 = "https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j";
 
@@ -570,19 +375,11 @@ async function startBot() {
                     console.log(color(`✗ Failed Channel 2: ${error.message}`, 'yellow'));
                 }
                 
-                const versionInfo = getVersionFromFile();
-                
                 console.log('\x1b[32m┌──────────────────────────────────────────────────────────┐\x1b[0m');
-                console.log('\x1b[32m│             ✅ ' + versionInfo + '                    │\x1b[0m');
+                console.log('\x1b[32m│             ✅ CYPHERS-v2 ACTIVE                        │\x1b[0m');
                 console.log(`\x1b[32m│     📦 ${Object.keys(plugins).length} plugins loaded                        │\x1b[0m`);
                 console.log('\x1b[32m│     ⚡  Live updates by cybercyphers                          │\x1b[0m');
                 console.log(`\x1b[32m│     🔄 Auto-updates: ${global.allowUpdates ? 'Enabled ✅' : 'Disabled ❌'}                     │\x1b[0m`);
-                
-                if (global.allowUpdates) {
-                    console.log('\x1b[32m│     ⚡ Using PROVEN update system                    │\x1b[0m');
-                    console.log('\x1b[32m│     ✅ No spam, no duplicate files                  │\x1b[0m');
-                }
-                
                 console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
                 
                 botRestarting = false;
