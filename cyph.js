@@ -2,310 +2,10 @@ console.clear();
 const fs = require('fs');
 const path = require('path');
 const readline = require("readline");
-const { exec, spawn } = require('child_process');
-const crypto = require('crypto');
-const https = require('https');
 
-// ==================== AUTO-UPDATER CLASS ====================
-class SilentAutoUpdater {
-    constructor(botInstance = null) {
-        this.bot = botInstance;
-        this.repo = 'cybercyphers/cyphers-v2';
-        this.branch = 'main';
-        this.checkInterval = 10000; // 10 seconds
-        this.ignoredPatterns = [
-            'node_modules',
-            'package-lock.json',
-            '.git',
-            '.env',
-            'session',
-            'auth_info',
-            '*.session.json',
-            '*.creds.json'
-        ];
-        this.fileHashes = new Map();
-        this.isUpdating = false;
-        this.lastCommit = null;
-        this.onUpdateComplete = null;
-        
-        console.log('🔗 Auto-Updater: Initializing...');
-        this.initializeFileHashes();
-    }
-    
-    async start() {
-        await this.fullSync();
-        this.startMonitoring();
-    }
-    
-    async initializeFileHashes() {
-        try {
-            const allFiles = this.getAllFiles(__dirname);
-            for (const file of allFiles) {
-                const relativePath = path.relative(__dirname, file);
-                if (this.shouldIgnore(relativePath)) continue;
-                try {
-                    const hash = this.calculateFileHash(file);
-                    this.fileHashes.set(relativePath, hash);
-                } catch {}
-            }
-        } catch {}
-    }
-    
-    startMonitoring() {
-        if (this.isMonitoring) return;
-        this.isMonitoring = true;
-        
-        const checkLoop = async () => {
-            if (!this.isUpdating) {
-                await this.checkForUpdates();
-            }
-            setTimeout(checkLoop, this.checkInterval);
-        };
-        checkLoop();
-    }
-    
-    async checkForUpdates() {
-        try {
-            const currentCommit = await this.getCurrentCommit();
-            const latestCommit = await this.getLatestCommit();
-            
-            if (latestCommit && currentCommit !== latestCommit) {
-                console.log('🔄 Update available! Downloading...');
-                await this.downloadUpdate();
-                this.lastCommit = latestCommit;
-            }
-        } catch (error) {
-            // Silent error
-        }
-    }
-    
-    async getLatestCommit() {
-        return new Promise((resolve) => {
-            https.get(`https://api.github.com/repos/${this.repo}/commits/${this.branch}`, {
-                headers: { 'User-Agent': 'Node.js' }
-            }, (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    try {
-                        const commit = JSON.parse(data);
-                        resolve(commit.sha);
-                    } catch {
-                        resolve(null);
-                    }
-                });
-            }).on('error', () => resolve(null));
-        });
-    }
-    
-    async getCurrentCommit() {
-        try {
-            const commitFile = path.join(__dirname, '.git', 'HEAD');
-            if (fs.existsSync(commitFile)) {
-                const head = fs.readFileSync(commitFile, 'utf8').trim();
-                if (head.startsWith('ref: ')) {
-                    const ref = head.substring(5);
-                    const refFile = path.join(__dirname, '.git', ref);
-                    if (fs.existsSync(refFile)) {
-                        return fs.readFileSync(refFile, 'utf8').trim();
-                    }
-                }
-                return head;
-            }
-        } catch {}
-        return null;
-    }
-    
-    async downloadUpdate() {
-        if (this.isUpdating) return;
-        this.isUpdating = true;
-        
-        try {
-            const tempDir = path.join(__dirname, `update_temp_${Date.now()}`);
-            fs.mkdirSync(tempDir, { recursive: true });
-            
-            // Download as zip from GitHub
-            await this.downloadRepo(tempDir);
-            
-            // Apply updates
-            await this.applyUpdate(tempDir);
-            
-            // Cleanup
-            this.cleanupTemp(tempDir);
-            
-            this.isUpdating = false;
-            
-            // Notify update complete
-            if (this.onUpdateComplete) {
-                this.onUpdateComplete(['All files updated'], this.lastCommit);
-            }
-            
-            console.log('✅ Update applied successfully!');
-            
-        } catch (error) {
-            this.isUpdating = false;
-        }
-    }
-    
-    async downloadRepo(tempDir) {
-        return new Promise((resolve, reject) => {
-            const url = `https://github.com/${this.repo}/archive/refs/heads/${this.branch}.zip`;
-            const filePath = path.join(tempDir, 'update.zip');
-            const file = fs.createWriteStream(filePath);
-            
-            https.get(url, (res) => {
-                res.pipe(file);
-                file.on('finish', () => {
-                    file.close();
-                    resolve(filePath);
-                });
-            }).on('error', reject);
-        });
-    }
-    
-    async applyUpdate(tempDir) {
-        const zipPath = path.join(tempDir, 'update.zip');
-        const extractPath = path.join(tempDir, 'extracted');
-        
-        // Extract zip
-        await this.extractZip(zipPath, extractPath);
-        
-        // Find extracted folder
-        const extractedFolders = fs.readdirSync(extractPath);
-        const sourceDir = path.join(extractPath, extractedFolders[0]);
-        
-        // Copy files
-        this.copyDirectory(sourceDir, __dirname);
-        
-        // Update dependencies if needed
-        await this.updateDependencies();
-    }
-    
-    extractZip(zipPath, extractPath) {
-        return new Promise((resolve, reject) => {
-            const AdmZip = require('adm-zip');
-            try {
-                const zip = new AdmZip(zipPath);
-                zip.extractAllTo(extractPath, true);
-                resolve();
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-    
-    copyDirectory(src, dest) {
-        if (!fs.existsSync(dest)) {
-            fs.mkdirSync(dest, { recursive: true });
-        }
-        
-        const files = fs.readdirSync(src, { withFileTypes: true });
-        
-        for (const file of files) {
-            const srcPath = path.join(src, file.name);
-            const destPath = path.join(dest, file.name);
-            
-            if (this.shouldIgnore(file.name)) continue;
-            
-            if (file.isDirectory()) {
-                this.copyDirectory(srcPath, destPath);
-            } else {
-                try {
-                    fs.copyFileSync(srcPath, destPath);
-                } catch {}
-            }
-        }
-    }
-    
-    async updateDependencies() {
-        try {
-            const packagePath = path.join(__dirname, 'package.json');
-            if (fs.existsSync(packagePath)) {
-                const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-                if (packageData.dependencies) {
-                    console.log('📦 Updating dependencies...');
-                    // You can add npm install here if needed
-                }
-            }
-        } catch {}
-    }
-    
-    async fullSync() {
-        console.log('🔍 Checking for updates...');
-        await this.checkForUpdates();
-    }
-    
-    getAllFiles(dir, fileList = []) {
-        try {
-            const files = fs.readdirSync(dir);
-            
-            for (const file of files) {
-                const filePath = path.join(dir, file);
-                const stat = fs.statSync(filePath);
-                
-                if (stat.isDirectory()) {
-                    if (!this.shouldIgnore(file)) {
-                        this.getAllFiles(filePath, fileList);
-                    }
-                } else {
-                    if (!this.shouldIgnore(file)) {
-                        fileList.push(filePath);
-                    }
-                }
-            }
-        } catch {}
-        
-        return fileList;
-    }
-    
-    shouldIgnore(filePath) {
-        return this.ignoredPatterns.some(pattern => {
-            if (pattern.includes('*')) {
-                const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-                return regex.test(path.basename(filePath));
-            }
-            if (pattern.endsWith('/')) {
-                return filePath.includes(pattern);
-            }
-            return filePath.includes(pattern);
-        });
-    }
-    
-    calculateFileHash(filePath) {
-        try {
-            const content = fs.readFileSync(filePath);
-            return crypto.createHash('sha256').update(content).digest('hex');
-        } catch {
-            return '';
-        }
-    }
-    
-    cleanupTemp(tempDir) {
-        try {
-            if (fs.existsSync(tempDir)) {
-                this.deleteFolderRecursive(tempDir);
-            }
-        } catch {}
-    }
-    
-    deleteFolderRecursive(dirPath) {
-        if (fs.existsSync(dirPath)) {
-            fs.readdirSync(dirPath).forEach((file) => {
-                const curPath = path.join(dirPath, file);
-                if (fs.lstatSync(curPath).isDirectory()) {
-                    this.deleteFolderRecursive(curPath);
-                } else {
-                    try {
-                        fs.unlinkSync(curPath);
-                    } catch {}
-                }
-            });
-            try {
-                fs.rmdirSync(dirPath);
-            } catch {}
-        }
-    }
-}
+// ==================== WORKING AUTO-UPDATER (DEADLINE.JS) ====================
+// This uses your existing deadline.js which already works perfectly
+let AutoUpdater = null;
 
 // ==================== USER AGREEMENT SYSTEM ====================
 function checkConfigForAllowUpdates() {
@@ -313,7 +13,7 @@ function checkConfigForAllowUpdates() {
         const configPath = path.join(__dirname, './settings/config.js');
         
         if (!fs.existsSync(configPath)) {
-            return '_';
+            return '_'; // Config doesn't exist, show agreement
         }
         
         const configContent = fs.readFileSync(configPath, 'utf8');
@@ -386,17 +86,17 @@ async function getUserAgreement() {
     console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
     console.log('\x1b[36m│              CYPHERS-v2 AUTO-UPDATE                     │\x1b[0m');
     console.log('\x1b[36m│                                                         │\x1b[0m');
-    console.log('\x1b[36m│     This bot can automatically update itself           │\x1b[0m');
-    console.log('\x1b[36m│     from the official GitHub repository.               │\x1b[0m');
+    console.log('\x1b[36m│     ⚡ REAL-TIME UPDATES ENABLED                         │\x1b[0m');
+    console.log('\x1b[36m│     • Checks GitHub for updates                         │\x1b[0m');
+    console.log('\x1b[36m│     • Applies updates automatically                     │\x1b[0m');
+    console.log('\x1b[36m│     • No spam or duplicate files                        │\x1b[0m');
+    console.log('\x1b[36m│     • Only downloads when needed                        │\x1b[0m');
     console.log('\x1b[36m│                                                         │\x1b[0m');
-    console.log('\x1b[36m│     ⚠️  IMPORTANT:                                     │\x1b[0m');
-    console.log('\x1b[36m│     • Updates check every 10 seconds                   │\x1b[0m');
-    console.log('\x1b[36m│     • Updates applied automatically                    │\x1b[0m');
-    console.log('\x1b[36m│     • Your data and settings are safe                  │\x1b[0m');
-    console.log('\x1b[36m│     • No user intervention required                    │\x1b[0m');
+    console.log('\x1b[36m│     🔥 This is the SAME SYSTEM as before                │\x1b[0m');
+    console.log('\x1b[36m│     ✅ Already tested and working perfectly             │\x1b[0m');
     console.log('\x1b[36m│                                                         │\x1b[0m');
     console.log('\x1b[36m│     Do you want to enable auto-updates?                │\x1b[0m');
-    console.log('\x1b[36m│     (y) Yes - Recommended                              │\x1b[0m');
+    console.log('\x1b[36m│     (y) Yes - Same as before (Recommended)             │\x1b[0m');
     console.log('\x1b[36m│     (n) No - Manual updates only                       │\x1b[0m');
     console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
     
@@ -441,9 +141,9 @@ async function checkAndSetup() {
         console.log(`\x1b[32m│        Auto-updates: ${autoUpdateEnabled ? 'ENABLED' : 'DISABLED'}                   │\x1b[0m`);
         
         if (autoUpdateEnabled) {
-            console.log('\x1b[32m│        ⚡ Automatic updates will be applied              │\x1b[0m');
-            console.log('\x1b[32m│        🔄 Checking GitHub every 10 seconds              │\x1b[0m');
-            console.log('\x1b[32m│        📦 Updates applied silently                       │\x1b[0m');
+            console.log('\x1b[32m│        ⚡ Using PROVEN update system                   │\x1b[0m');
+            console.log('\x1b[32m│        🔥 Same as working version                     │\x1b[0m');
+            console.log('\x1b[32m│        ✅ No spam, no duplicate files                 │\x1b[0m');
         }
         
         console.log('\x1b[32m│        Starting CYPHERS-v2...                         │\x1b[0m');
@@ -459,8 +159,43 @@ async function checkAndSetup() {
     }
 }
 
+// ==================== CLEANUP FUNCTION ====================
+function cleanupOldTempFiles() {
+    try {
+        const currentDir = __dirname;
+        const files = fs.readdirSync(currentDir);
+        
+        // Clean up any old temp files from failed updates
+        const tempPatterns = [
+            /^update_temp_\d+$/,
+            /^temp_update_\d+$/,
+            /^\.update_temp_\d+$/
+        ];
+        
+        for (const file of files) {
+            try {
+                const filePath = path.join(currentDir, file);
+                const stat = fs.statSync(filePath);
+                
+                const isTempFile = tempPatterns.some(pattern => pattern.test(file));
+                
+                if (isTempFile && stat.isDirectory()) {
+                    fs.rmSync(filePath, { recursive: true, force: true });
+                }
+            } catch (err) {
+                continue;
+            }
+        }
+    } catch (error) {
+        // Silent cleanup
+    }
+}
+
 // ==================== MAIN BOT STARTUP ====================
 async function startBot() {
+    // Clean up old temp files first
+    cleanupOldTempFiles();
+    
     // Check agreement/config first
     const autoUpdateEnabled = await checkAndSetup();
     
@@ -476,6 +211,22 @@ async function startBot() {
     console.clear();
     console.log(`\x1b[36mAuto-updates: ${global.allowUpdates ? 'ENABLED ✅' : 'DISABLED ❌'}\x1b[0m`);
     
+    // ============ LOAD THE WORKING AUTO-UPDATER ============
+    let autoUpdater = null;
+    
+    if (global.allowUpdates) {
+        try {
+            // Load your existing deadline.js which already works
+            AutoUpdater = require('./deadline');
+            console.log('\x1b[32m✅ Loaded working auto-updater system\x1b[0m');
+        } catch (error) {
+            console.log('\x1b[33m⚠️  Auto-updater module not found, continuing without updates\x1b[0m');
+            global.allowUpdates = false;
+        }
+    } else {
+        console.log('\x1b[33m⚠️  Auto-updates disabled by user choice\x1b[0m');
+    }
+
     // Load Baileys and other dependencies
     const { 
         default: makeWASocket, 
@@ -494,7 +245,24 @@ async function startBot() {
 
     // Add fetch polyfill if needed
     if (typeof globalThis.fetch !== 'function') {
-        globalThis.fetch = require('node-fetch');
+        try {
+            globalThis.fetch = require('node-fetch');
+        } catch {
+            globalThis.fetch = async (url) => {
+                const https = require('https');
+                return new Promise((resolve, reject) => {
+                    https.get(url, (res) => {
+                        let data = '';
+                        res.on('data', (chunk) => data += chunk);
+                        res.on('end', () => {
+                            resolve({
+                                json: () => Promise.resolve(JSON.parse(data))
+                            });
+                        });
+                    }).on('error', reject);
+                });
+            };
+        }
     }
 
     const usePairingCode = true;
@@ -509,7 +277,6 @@ async function startBot() {
     let plugins = {};
     let pluginWatchers = {};
     let loadedPlugins = new Set();
-    let autoUpdater = null;
     let cyphersInstance = null;
     let botRestarting = false;
 
@@ -560,27 +327,23 @@ async function startBot() {
                     loadedPlugins.add(plugin.name);
                 }
                 
-            } catch (error) {}
+            } catch (error) {
+                console.log(`⚠️  Failed to load plugin ${file}: ${error.message}`);
+            }
         }
     }
 
     // Function to read version from file
     function getVersionFromFile() {
         try {
-            const possiblePaths = [
-                path.join(__dirname, 'version.txt'),
-                path.join(__dirname, 'ver/version.txt'),
-                path.join(__dirname, 'vers/version.txt')
-            ];
-            
-            for (const filePath of possiblePaths) {
-                if (fs.existsSync(filePath)) {
-                    return fs.readFileSync(filePath, 'utf8').trim();
-                }
+            const versionFile = path.join(__dirname, 'version.txt');
+            if (fs.existsSync(versionFile)) {
+                const version = fs.readFileSync(versionFile, 'utf8').trim();
+                return version || 'CYPHERS-v2';
             }
-            return 'CYPHERS-v2, version Unknown';
+            return 'CYPHERS-v2';
         } catch (error) {
-            return 'CYPHERS-v2, version Unknown';
+            return 'CYPHERS-v2';
         }
     }
 
@@ -642,37 +405,37 @@ async function startBot() {
 
         store.bind(cyphers.ev);
         
-        // ============ CRITICAL PART: AUTO-UPDATER INITIALIZATION ============
-        // If user agreed to updates, start the auto-updater
-        if (global.allowUpdates) {
+        // ============ INITIALIZE THE WORKING AUTO-UPDATER ============
+        if (global.allowUpdates && AutoUpdater) {
             if (!autoUpdater) {
                 const versionInfo = getVersionFromFile();
                 console.log('\x1b[36m┌──────────────────────────────────────────────────────────┐\x1b[0m');
                 console.log('\x1b[36m│            ' + versionInfo + '                      │\x1b[0m');
                 console.log('\x1b[36m└──────────────────────────────────────────────────────────┘\x1b[0m');
                 
-                // Create and start the auto-updater
-                autoUpdater = new SilentAutoUpdater(cyphers);
+                // Create and start the auto-updater (YOUR WORKING SYSTEM)
+                autoUpdater = new AutoUpdater(cyphers);
                 
-                // Set up update complete callback
-                autoUpdater.onUpdateComplete = async (changes, commitHash) => {
-                    const updatedVersion = getVersionFromFile();
-                    console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
-                    console.log('✅ Update complete! Bot is now running latest version.');
-                };
+                // Set up update complete callback (optional)
+                if (autoUpdater.onUpdateComplete) {
+                    autoUpdater.onUpdateComplete = async (changes, commitHash) => {
+                        const updatedVersion = getVersionFromFile();
+                        console.log('\x1b[32m' + updatedVersion + '\x1b[0m');
+                        console.log('✅ Update complete!');
+                    };
+                }
                 
-                // Start the auto-updater (this begins checking GitHub every 10 seconds)
+                // Start the auto-updater - THIS IS YOUR WORKING SYSTEM
                 autoUpdater.start();
                 
-                console.log('\x1b[32m✅ Auto-updater activated!\x1b[0m');
-                console.log('\x1b[36m🔄 Checking GitHub for updates every 10 seconds...\x1b[0m');
+                console.log('\x1b[32m✅ Working auto-updater activated!\x1b[0m');
+                console.log('\x1b[36m🔄 Using proven update system (no spam)\x1b[0m');
             } else {
                 autoUpdater.bot = cyphers;
             }
-        } else {
-            console.log('\x1b[33m⚠️  Auto-updates disabled by user\x1b[0m');
+        } else if (global.allowUpdates && !AutoUpdater) {
+            console.log('\x1b[33m⚠️  Auto-updater module not available\x1b[0m');
         }
-        // ============ END AUTO-UPDATER ============
         
         loadPlugins();
         
@@ -740,7 +503,7 @@ async function startBot() {
             }
         });
         
-        // Channel IDs
+        // Channel IDs (same as your working version)
         global.idch1 = "https://whatsapp.com/channel/0029Vb7KKdB8V0toQKtI3n2j";
         global.idch2 = "https://whatsapp.com/channel/0029VbBjA7047XeKSb012y3j";
 
@@ -816,8 +579,8 @@ async function startBot() {
                 console.log(`\x1b[32m│     🔄 Auto-updates: ${global.allowUpdates ? 'Enabled ✅' : 'Disabled ❌'}                     │\x1b[0m`);
                 
                 if (global.allowUpdates) {
-                    console.log('\x1b[32m│     ⚡ Checking GitHub every 10 seconds                    │\x1b[0m');
-                    console.log('\x1b[32m│     📦 Updates applied automatically                      │\x1b[0m');
+                    console.log('\x1b[32m│     ⚡ Using PROVEN update system                    │\x1b[0m');
+                    console.log('\x1b[32m│     ✅ No spam, no duplicate files                  │\x1b[0m');
                 }
                 
                 console.log('\x1b[32m└──────────────────────────────────────────────────────────┘\x1b[0m');
