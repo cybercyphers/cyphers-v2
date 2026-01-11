@@ -23,7 +23,8 @@ class AutoUpdater {
             '*.session.json',
             '*.creds.json',
             'temp/',
-            'tmp/'
+            'tmp/',
+            'config.js'
         ];
         this.protectedFiles = [
             'config.js',
