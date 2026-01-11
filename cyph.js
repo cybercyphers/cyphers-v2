@@ -1,4 +1,4 @@
-and how does this support console.clear();
+console.clear();
 
 // 1First, read config.js to check for global.allowUpdates
 const fs = require('fs');
