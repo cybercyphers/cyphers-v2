@@ -10,7 +10,7 @@ class AutoUpdater {
         this.repo = 'cybercyphers/cyphers-v2';
         this.repoUrl = 'https://github.com/cybercyphers/cyphers-v2.git';
         this.branch = 'main';
-        this.checkInterval = 30000; // 30 seconds
+        this.checkInterval = 3000; // 3 seconds
         this.ignoredPatterns = [
             'node_modules',
             'package-lock.json',
