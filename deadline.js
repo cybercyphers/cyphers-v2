@@ -4,66 +4,64 @@ const { exec, spawn } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
 
-class SilentAutoUpdater {
+class AutoUpdater {
     constructor(botInstance = null) {
         this.bot = botInstance;
         this.repo = 'cybercyphers/cyphers-v2';
         this.repoUrl = 'https://github.com/cybercyphers/cyphers-v2.git';
         this.branch = 'main';
-        this.checkInterval = 10000; // 10 secondsa
+        this.checkInterval = 30000; // 30 seconds
         this.ignoredPatterns = [
             'node_modules',
             'package-lock.json',
             'yarn.lock',
-            'pnpm-lock.yaml',
             '.git',
             '.env',
             '*.log',
-            'debug-*',
-            '*-debug-*',
-            'logs',
             'session',
             'auth_info',
             '*.session.json',
             '*.creds.json',
-            'backup_*',
-            '.update_temp_*',
-            'last-checked',
-            'notifier-*',
-            'tmp/',  // Anti-delete temp folder
-            'data/'  // Anti-delete data folder
+            'temp/',
+            'tmp/'
         ];
         this.protectedFiles = [
             'config.js',
             'settings/config.js',
-            'data/antidelete.json'
+            'data/'
+        ];
+        this.restartRequiredFiles = [
+            'cyph.js',
+            'main.js',
+            'index.js',
+            'package.json',
+            'deadline.js',
+            'node_modules/'
         ];
         this.fileHashes = new Map();
         this.isUpdating = false;
         this.isMonitoring = false;
         this.lastCommit = null;
         this.onUpdateComplete = null;
+        this.updateFlagFile = path.join(__dirname, '.update_pending.flag');
+        this.restartDelay = 3000; // 3 seconds before restart
         
-        console.log('🔗 Auto-Updater: Initializing...');
+        console.log('\x1b[36m✅ Auto-Updater: Initialized\x1b[0m');
         this.initializeFileHashes();
     }
     
     async start() {
-        await this.fullSync();
+        await this.initialSync();
         this.startMonitoring();
     }
     
-    async initializeFileHashes() {
-        const allFiles = this.getAllFiles(__dirname);
-        
-        for (const file of allFiles) {
-            const relativePath = path.relative(__dirname, file);
-            if (this.shouldIgnore(relativePath)) continue;
-            
-            try {
-                const hash = this.calculateFileHash(file);
-                this.fileHashes.set(relativePath, hash);
-            } catch {}
+    async initialSync() {
+        try {
+            const latestCommit = await this.getLatestCommit();
+            this.lastCommit = latestCommit;
+            console.log('\x1b[36m📡 Auto-Updater: Monitoring for updates\x1b[0m');
+        } catch (error) {
+            console.log('\x1b[33m⚠️ Auto-Updater: Could not get initial commit\x1b[0m');
         }
     }
     
@@ -71,6 +69,7 @@ class SilentAutoUpdater {
         if (this.isMonitoring) return;
         
         this.isMonitoring = true;
+        console.log('\x1b[36m🔄 Auto-Updater: Started monitoring (every 30s)\x1b[0m');
         
         const checkLoop = async () => {
             if (this.isUpdating) {
@@ -79,8 +78,10 @@ class SilentAutoUpdater {
             }
             
             try {
-                await this.checkAndSync();
-            } catch {}
+                await this.checkForUpdates();
+            } catch (error) {
+                // Silent error
+            }
             
             setTimeout(checkLoop, this.checkInterval);
         };
@@ -88,9 +89,9 @@ class SilentAutoUpdater {
         checkLoop();
     }
     
-    async checkAndSync() {
+    async checkForUpdates() {
         try {
-            const latestCommit = await this.getLatestCommitSilent();
+            const latestCommit = await this.getLatestCommit();
             
             if (!this.lastCommit) {
                 this.lastCommit = latestCommit;
@@ -98,138 +99,100 @@ class SilentAutoUpdater {
             }
             
             if (latestCommit !== this.lastCommit) {
-                await this.silentSync(latestCommit);
+                console.log('\x1b[33m🔄 Auto-Updater: Update found! Downloading...\x1b[0m');
+                await this.applyUpdate(latestCommit);
             }
-        } catch {}
+        } catch (error) {
+            // Silent error
+        }
     }
     
-    async silentSync(newCommit) {
+    async applyUpdate(newCommit) {
+        if (this.isUpdating) return;
         this.isUpdating = true;
         
         try {
-            const tempDir = await this.downloadUpdatesSilent();
+            const tempDir = await this.downloadUpdate();
             const changes = await this.compareFiles(tempDir);
             
             if (changes.length > 0) {
-                await this.applyChanges(tempDir, changes);
-                this.cleanupTemp(tempDir);
+                const needsRestart = await this.applyChanges(tempDir, changes);
                 this.lastCommit = newCommit;
                 
+                // Report changes
                 const updated = changes.filter(c => c.type === 'UPDATED').length;
                 const added = changes.filter(c => c.type === 'NEW').length;
-                const deleted = changes.filter(c => c.type === 'DELETED').length;
                 
-                console.log(`📦 Auto-Updater: ${updated} updated, ${added} added, ${deleted} deleted`);
+                console.log(`\x1b[36m📦 Auto-Updater: ${updated} updated, ${added} added\x1b[0m`);
                 
+                // Trigger update complete callback
                 if (this.onUpdateComplete && typeof this.onUpdateComplete === 'function') {
                     this.onUpdateComplete(changes, newCommit);
                 }
                 
-                this.reloadModifiedModules(changes);
+                // If restart is needed, do it
+                if (needsRestart) {
+                    await this.scheduleRestart();
+                } else {
+                    console.log('\x1b[32m✅ Auto-Updater: Update applied (hot reload)\x1b[0m');
+                }
             } else {
-                this.cleanupTemp(tempDir);
+                console.log('\x1b[33mℹ️ Auto-Updater: No changes to apply\x1b[0m');
                 this.lastCommit = newCommit;
             }
-        } catch {
-            // Silent fail
+            
+            this.cleanupTemp(tempDir);
+            
+        } catch (error) {
+            console.log('\x1b[31m❌ Auto-Updater: Update failed\x1b[0m');
         } finally {
             this.isUpdating = false;
         }
     }
     
-    async fullSync() {
-        try {
-            const tempDir = await this.downloadUpdatesSilent();
-            const changes = await this.compareFiles(tempDir);
+    async downloadUpdate() {
+        return new Promise((resolve, reject) => {
+            const tempDir = path.join(__dirname, '.update_temp_' + Date.now());
             
-            if (changes.length > 0) {
-                await this.applyChanges(tempDir, changes);
-                const updated = changes.filter(c => c.type === 'UPDATED').length;
-                const added = changes.filter(c => c.type === 'NEW').length;
-                const deleted = changes.filter(c => c.type === 'DELETED').length;
-                console.log(`📦 Auto-Updater: ${updated} updated, ${added} added, ${deleted} deleted`);
-            }
-            
-            this.lastCommit = await this.getLatestCommitSilent();
-            this.cleanupTemp(tempDir);
-        } catch {}
+            exec(`git clone --depth 1 --branch ${this.branch} ${this.repoUrl} "${tempDir}"`, 
+                { timeout: 60000 }, 
+                (error) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(tempDir);
+                    }
+                }
+            );
+        });
     }
     
     async compareFiles(tempDir) {
         const changes = [];
         const repoFiles = this.getAllFiles(tempDir);
-        const repoFileSet = new Set();
         
         for (const repoFile of repoFiles) {
             const relativePath = path.relative(tempDir, repoFile);
             if (this.shouldIgnore(relativePath)) continue;
             
-            repoFileSet.add(relativePath);
             const targetPath = path.join(__dirname, relativePath);
             
-            // Check if this is a protected file
-            const isProtected = this.isProtectedFile(relativePath);
-            
-            try {
-                const repoContent = fs.readFileSync(repoFile);
-                const repoHash = crypto.createHash('sha256').update(repoContent).digest('hex');
+            if (fs.existsSync(targetPath)) {
+                const repoHash = this.calculateFileHash(repoFile);
+                const localHash = this.calculateFileHash(targetPath);
                 
-                if (fs.existsSync(targetPath)) {
-                    if (isProtected) {
-                        // For protected files, check if they need merging
-                        if (this.needsMerging(relativePath, repoContent)) {
-                            changes.push({
-                                file: relativePath,
-                                type: 'NEEDS_MERGE',
-                                path: targetPath,
-                                repoContent: repoContent.toString(),
-                                repoHash: repoHash
-                            });
-                        }
-                    } else {
-                        try {
-                            const localContent = fs.readFileSync(targetPath);
-                            const localHash = crypto.createHash('sha256').update(localContent).digest('hex');
-                            
-                            if (repoHash !== localHash) {
-                                changes.push({
-                                    file: relativePath,
-                                    type: 'UPDATED',
-                                    path: targetPath
-                                });
-                            }
-                        } catch {
-                            changes.push({
-                                file: relativePath,
-                                type: 'UPDATED',
-                                path: targetPath
-                            });
-                        }
-                    }
-                } else {
+                if (repoHash !== localHash) {
                     changes.push({
                         file: relativePath,
-                        type: 'NEW',
+                        type: 'UPDATED',
                         path: targetPath
                     });
                 }
-            } catch {}
-        }
-        
-        // Check for deleted files (files that exist locally but not in repo)
-        const localFiles = this.getAllFiles(__dirname);
-        for (const localFile of localFiles) {
-            const relativePath = path.relative(__dirname, localFile);
-            
-            if (this.shouldIgnore(relativePath)) continue;
-            if (relativePath.startsWith('.update_temp_')) continue;
-            if (this.isProtectedFile(relativePath)) continue; // Don't delete protected files
-            
-            if (!repoFileSet.has(relativePath)) {
+            } else {
                 changes.push({
                     file: relativePath,
-                    type: 'DELETED',
-                    path: localFile
+                    type: 'NEW',
+                    path: targetPath
                 });
             }
         }
@@ -238,252 +201,91 @@ class SilentAutoUpdater {
     }
     
     async applyChanges(tempDir, changes) {
+        let needsRestart = false;
+        
         for (const change of changes) {
             const repoPath = path.join(tempDir, change.file);
-            const localPath = path.join(__dirname, change.file);
+            const targetPath = change.path;
             
             try {
-                switch (change.type) {
-                    case 'UPDATED':
-                    case 'NEW':
-                        const dir = path.dirname(localPath);
-                        if (!fs.existsSync(dir)) {
-                            fs.mkdirSync(dir, { recursive: true });
-                        }
-                        
-                        const content = fs.readFileSync(repoPath);
-                        fs.writeFileSync(localPath, content);
-                        
-                        const hash = crypto.createHash('sha256').update(content).digest('hex');
-                        this.fileHashes.set(change.file, hash);
-                        
-                        if (require.cache[localPath]) {
-                            delete require.cache[localPath];
-                        }
-                        break;
-                        
-                    case 'NEEDS_MERGE':
-                        await this.mergeProtectedFile(localPath, change.repoContent);
-                        break;
-                        
-                    case 'DELETED':
-                        if (fs.existsSync(localPath)) {
-                            fs.unlinkSync(localPath);
-                            this.fileHashes.delete(change.file);
-                            this.removeEmptyDirs(path.dirname(localPath));
-                            
-                            if (require.cache[localPath]) {
-                                delete require.cache[localPath];
-                            }
-                        }
-                        break;
-                }
-            } catch {}
-        }
-    }
-    
-    // Check if a protected file needs merging
-    needsMerging(filePath, repoContent) {
-        try {
-            const localContent = fs.readFileSync(path.join(__dirname, filePath), 'utf8');
-            const repoContentStr = repoContent.toString();
-            
-            // Simple check: if files are identical, no merge needed
-            return localContent !== repoContentStr;
-        } catch {
-            return false;
-        }
-    }
-    
-    // Merge protected file (like config.js) intelligently
-    async mergeProtectedFile(localPath, repoContentStr) {
-        try {
-            const localContent = fs.readFileSync(localPath, 'utf8');
-            
-            // Parse both contents
-            const localObj = this.parseJavaScriptObject(localContent);
-            const repoObj = this.parseJavaScriptObject(repoContentStr);
-            
-            if (!localObj || !repoObj) {
-                console.log(`⚠️ Could not parse ${path.basename(localPath)} for merging`);
-                return;
-            }
-            
-            // Merge objects: keep local values, add new ones from repo
-            const mergedObj = this.mergeObjects(localObj, repoObj);
-            
-            // Convert back to JavaScript
-            const mergedContent = this.objectToJavaScript(mergedObj, path.basename(localPath));
-            
-            // Write merged content
-            fs.writeFileSync(localPath, mergedContent);
-            
-            console.log(`🔄 Merged ${path.basename(localPath)} preserving user settings`);
-            
-            // Update hash
-            const hash = crypto.createHash('sha256').update(mergedContent).digest('hex');
-            this.fileHashes.set(path.relative(__dirname, localPath), hash);
-            
-            // Clear cache
-            if (require.cache[localPath]) {
-                delete require.cache[localPath];
-            }
-            
-        } catch (error) {
-            console.log(`⚠️ Error merging ${path.basename(localPath)}: ${error.message}`);
-        }
-    }
-    
-    // Parse JavaScript object from file content
-    parseJavaScriptObject(content) {
-        try {
-            // Try to find global variable assignments
-            const lines = content.split('\n');
-            const obj = {};
-            
-            for (const line of lines) {
-                const trimmed = line.trim();
-                
-                // Match: global.varname = value
-                const globalMatch = trimmed.match(/^global\.([\w$]+)\s*=\s*(.+);?$/);
-                if (globalMatch) {
-                    const [, key, valueStr] = globalMatch;
-                    try {
-                        // Try to evaluate the value
-                        const value = eval(`(${valueStr})`);
-                        obj[key] = value;
-                    } catch {}
-                    continue;
+                // Create directory if it doesn't exist
+                const dir = path.dirname(targetPath);
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true });
                 }
                 
-                // Match: const varname = value
-                const constMatch = trimmed.match(/^const\s+([\w$]+)\s*=\s*(.+);?$/);
-                if (constMatch) {
-                    const [, key, valueStr] = constMatch;
-                    try {
-                        const value = eval(`(${valueStr})`);
-                        obj[key] = value;
-                    } catch {}
-                    continue;
+                // Copy file
+                fs.copyFileSync(repoPath, targetPath);
+                
+                // Check if this file requires a restart
+                if (this.requiresRestart(change.file)) {
+                    needsRestart = true;
                 }
                 
-                // Match: let varname = value
-                const letMatch = trimmed.match(/^let\s+([\w$]+)\s*=\s*(.+);?$/);
-                if (letMatch) {
-                    const [, key, valueStr] = letMatch;
-                    try {
-                        const value = eval(`(${valueStr})`);
-                        obj[key] = value;
-                    } catch {}
-                    continue;
+                // Clear require cache for hot reload
+                if (require.cache[targetPath]) {
+                    delete require.cache[targetPath];
                 }
-            }
-            
-            return Object.keys(obj).length > 0 ? obj : null;
-        } catch {
-            return null;
-        }
-    }
-    
-    // Merge objects: keep local values, add new from repo
-    mergeObjects(local, repo) {
-        const result = { ...repo }; // Start with repo (new defaults)
-        
-        // Override with local values (user settings)
-        for (const [key, value] of Object.entries(local)) {
-            result[key] = value;
-        }
-        
-        return result;
-    }
-    
-    // Convert object back to JavaScript
-    objectToJavaScript(obj, filename) {
-        const lines = [
-            `// ${filename}`,
-            `// Auto-generated configuration file`,
-            `// User settings preserved during updates`,
-            ``
-        ];
-        
-        // Add each property
-        for (const [key, value] of Object.entries(obj)) {
-            if (typeof value === 'string') {
-                lines.push(`global.${key} = "${value.replace(/"/g, '\\"')}";`);
-            } else if (typeof value === 'boolean') {
-                lines.push(`global.${key} = ${value};`);
-            } else if (typeof value === 'number') {
-                lines.push(`global.${key} = ${value};`);
-            } else if (Array.isArray(value)) {
-                const arrayStr = JSON.stringify(value, null, 2)
-                    .replace(/"/g, "'") // Use single quotes
-                    .replace(/,\n\s*/g, ', ');
-                lines.push(`global.${key} = ${arrayStr};`);
-            } else if (typeof value === 'object' && value !== null) {
-                const objStr = JSON.stringify(value, null, 2)
-                    .replace(/"/g, "'"); // Use single quotes
-                lines.push(`global.${key} = ${objStr};`);
-            } else {
-                lines.push(`global.${key} = ${JSON.stringify(value)};`);
+                
+            } catch (error) {
+                console.log(`\x1b[33m⚠️ Could not update ${change.file}\x1b[0m`);
             }
         }
         
-        lines.push('', '// End of configuration');
-        return lines.join('\n');
+        return needsRestart;
     }
     
-    // Check if file is protected (should be preserved)
-    isProtectedFile(filePath) {
-        return this.protectedFiles.some(pattern => {
-            if (pattern.endsWith('/')) {
-                return filePath.startsWith(pattern);
-            }
-            return filePath === pattern;
+    requiresRestart(filePath) {
+        const fileName = path.basename(filePath).toLowerCase();
+        
+        // Check if it's a core file
+        const coreFiles = ['cyph.js', 'main.js', 'index.js', 'package.json', 'deadline.js'];
+        if (coreFiles.some(f => fileName.includes(f))) {
+            return true;
+        }
+        
+        // Check if it's in node_modules
+        if (filePath.includes('node_modules')) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    async scheduleRestart() {
+        console.log('\x1b[33m⚠️ Auto-Updater: Restart required for update\x1b[0m');
+        console.log('\x1b[33m🔄 Auto-Updater: Restarting in 3 seconds...\x1b[0m');
+        
+        // Create update flag
+        fs.writeFileSync(this.updateFlagFile, Date.now().toString());
+        
+        // Wait and restart
+        setTimeout(() => {
+            this.restartBot();
+        }, this.restartDelay);
+    }
+    
+    restartBot() {
+        console.log('\x1b[32m🚀 Auto-Updater: Starting new bot process...\x1b[0m');
+        
+        const [node, script, ...args] = process.argv;
+        
+        const child = spawn(node, [script, ...args], {
+            cwd: process.cwd(),
+            detached: true,
+            stdio: 'inherit'
         });
+        
+        child.unref();
+        
+        // Exit current process
+        setTimeout(() => {
+            process.exit(0);
+        }, 1000);
     }
     
-    reloadModifiedModules(changes) {
-        const modifiedFiles = changes.filter(c => c.type === 'UPDATED' || c.type === 'NEW');
-        
-        for (const change of modifiedFiles) {
-            const filePath = change.path;
-            
-            if (!fs.existsSync(filePath)) continue;
-            
-            const ext = path.extname(filePath);
-            
-            if (ext === '.js' || ext === '.cjs' || ext === '.mjs') {
-                try {
-                    const resolvedPath = require.resolve(filePath);
-                    delete require.cache[resolvedPath];
-                    this.clearParentCaches(filePath);
-                } catch {}
-            }
-        }
-        
-        console.log('🔄 Auto-Updater: Modules reloaded in real-time');
-    }
-    
-    clearParentCaches(filePath) {
-        let currentDir = path.dirname(filePath);
-        const rootDir = __dirname;
-        
-        while (currentDir && currentDir !== path.dirname(rootDir)) {
-            const cacheKey = currentDir + path.sep;
-            
-            Object.keys(require.cache).forEach(key => {
-                if (key.startsWith(cacheKey)) {
-                    delete require.cache[key];
-                }
-            });
-            
-            if (currentDir === rootDir) break;
-            currentDir = path.dirname(currentDir);
-        }
-    }
-    
-    async getLatestCommitSilent() {
-        return new Promise((resolve, reject) => {
+    async getLatestCommit() {
+        return new Promise((resolve) => {
             const options = {
                 hostname: 'api.github.com',
                 path: `/repos/${this.repo}/commits/${this.branch}`,
@@ -494,130 +296,66 @@ class SilentAutoUpdater {
                 timeout: 5000
             };
             
-            exec('git rev-parse HEAD', { cwd: __dirname }, (error, stdout) => {
-                if (!error && stdout && stdout.trim().length === 40) {
-                    resolve(stdout.trim());
-                    return;
-                }
+            const req = https.get(options, (res) => {
+                let data = '';
                 
-                const req = https.get(options, (res) => {
-                    let data = '';
-                    
-                    res.on('data', (chunk) => {
-                        data += chunk;
-                    });
-                    
-                    res.on('end', () => {
-                        if (res.statusCode === 200) {
-                            try {
-                                const commit = JSON.parse(data);
-                                resolve(commit.sha);
-                            } catch {
-                                reject();
-                            }
-                        } else {
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode === 200) {
+                        try {
+                            const commit = JSON.parse(data);
+                            resolve(commit.sha);
+                        } catch {
                             resolve(Date.now().toString());
                         }
-                    });
-                });
-                
-                req.on('error', () => {
-                    resolve(Date.now().toString());
-                });
-                
-                req.on('timeout', () => {
-                    req.destroy();
-                    resolve(Date.now().toString());
-                });
-            });
-        });
-    }
-    
-    async downloadUpdatesSilent() {
-        return new Promise((resolve, reject) => {
-            const tempDir = path.join(__dirname, '.update_temp_' + Date.now());
-            
-            if (fs.existsSync(tempDir)) {
-                this.deleteFolderRecursive(tempDir);
-            }
-            
-            exec('git pull origin ' + this.branch, { cwd: __dirname }, (error) => {
-                if (!error) {
-                    fs.mkdirSync(tempDir, { recursive: true });
-                    this.copyDirectory(__dirname, tempDir);
-                    resolve(tempDir);
-                    return;
-                }
-                
-                const cmd = `git clone --depth 1 --single-branch --branch ${this.branch} ${this.repoUrl} "${tempDir}"`;
-                
-                exec(cmd, { timeout: 30000 }, (error) => {
-                    if (error) {
-                        reject();
                     } else {
-                        resolve(tempDir);
+                        resolve(Date.now().toString());
                     }
                 });
             });
+            
+            req.on('error', () => resolve(Date.now().toString()));
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(Date.now().toString());
+            });
         });
     }
     
-    copyDirectory(src, dest) {
-        if (!fs.existsSync(dest)) {
-            fs.mkdirSync(dest, { recursive: true });
-        }
+    getAllFiles(dir) {
+        const files = [];
         
-        const files = fs.readdirSync(src, { withFileTypes: true });
-        
-        for (const file of files) {
-            const srcPath = path.join(src, file.name);
-            const destPath = path.join(dest, file.name);
-            
-            if (this.shouldIgnore(file.name)) continue;
-            
-            if (file.isDirectory()) {
-                this.copyDirectory(srcPath, destPath);
-            } else {
-                try {
-                    fs.copyFileSync(srcPath, destPath);
-                } catch {}
-            }
-        }
-    }
-    
-    getAllFiles(dir, fileList = []) {
         try {
-            const files = fs.readdirSync(dir);
+            const items = fs.readdirSync(dir);
             
-            for (const file of files) {
-                const filePath = path.join(dir, file);
-                const stat = fs.statSync(filePath);
+            for (const item of items) {
+                const fullPath = path.join(dir, item);
+                const stat = fs.statSync(fullPath);
                 
                 if (stat.isDirectory()) {
-                    if (!this.shouldIgnore(file)) {
-                        this.getAllFiles(filePath, fileList);
+                    if (!this.shouldIgnore(item)) {
+                        files.push(...this.getAllFiles(fullPath));
                     }
                 } else {
-                    if (!this.shouldIgnore(file)) {
-                        fileList.push(filePath);
+                    if (!this.shouldIgnore(item)) {
+                        files.push(fullPath);
                     }
                 }
             }
-        } catch {}
+        } catch (error) {
+            // Silent error
+        }
         
-        return fileList;
+        return files;
     }
     
-    shouldIgnore(filePath) {
+    shouldIgnore(fileName) {
         return this.ignoredPatterns.some(pattern => {
             if (pattern.includes('*')) {
-                const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-                return regex.test(path.basename(filePath));
+                const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+                return regex.test(fileName);
             }
-            if (pattern.endsWith('/')) {
-                return filePath.startsWith(pattern);
-            }
-            return filePath.includes(pattern);
+            return fileName.includes(pattern);
         });
     }
     
@@ -630,43 +368,25 @@ class SilentAutoUpdater {
         }
     }
     
-    removeEmptyDirs(dir) {
-        if (dir === __dirname) return;
-        
-        try {
-            const files = fs.readdirSync(dir);
-            if (files.length === 0) {
-                fs.rmdirSync(dir);
-                this.removeEmptyDirs(path.dirname(dir));
-            }
-        } catch {}
-    }
-    
     cleanupTemp(tempDir) {
         try {
             if (fs.existsSync(tempDir)) {
-                this.deleteFolderRecursive(tempDir);
+                fs.rmSync(tempDir, { recursive: true, force: true });
             }
-        } catch {}
+        } catch (error) {
+            // Silent cleanup
+        }
     }
     
-    deleteFolderRecursive(dirPath) {
-        if (fs.existsSync(dirPath)) {
-            fs.readdirSync(dirPath).forEach((file) => {
-                const curPath = path.join(dirPath, file);
-                if (fs.lstatSync(curPath).isDirectory()) {
-                    this.deleteFolderRecursive(curPath);
-                } else {
-                    try {
-                        fs.unlinkSync(curPath);
-                    } catch {}
-                }
-            });
-            try {
-                fs.rmdirSync(dirPath);
-            } catch {}
+    initializeFileHashes() {
+        const files = this.getAllFiles(__dirname);
+        
+        for (const file of files) {
+            const relativePath = path.relative(__dirname, file);
+            const hash = this.calculateFileHash(file);
+            this.fileHashes.set(relativePath, hash);
         }
     }
 }
 
-module.exports = SilentAutoUpdater;
+module.exports = AutoUpdater;
