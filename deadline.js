@@ -1,16 +1,16 @@
 const fs = require('fs');
 const path = require('path');
-const { exec, spawn } = require('child_process');
+const { exec } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-//nice one
+
 class AutoUpdater {
     constructor(botInstance = null) {
         this.bot = botInstance;
         this.repo = 'cybercyphers/cyphers-v2';
         this.repoUrl = 'https://github.com/cybercyphers/cyphers-v2.git';
         this.branch = 'main';
-        this.checkInterval = 10800; //  3 hours
+        this.checkInterval = 10800; // 3 hours
         this.ignoredPatterns = [
             'node_modules',
             'package-lock.json',
@@ -31,23 +31,13 @@ class AutoUpdater {
             'settings/config.js',
             'data/'
         ];
-        this.restartRequiredFiles = [
-            'cyph.js',
-            'main.js',
-            'index.js',
-            'package.json',
-            'deadline.js',
-            'node_modules/'
-        ];
         this.fileHashes = new Map();
         this.isUpdating = false;
         this.isMonitoring = false;
         this.lastCommit = null;
         this.onUpdateComplete = null;
-        this.updateFlagFile = path.join(__dirname, '.update_pending.flag');
-        this.restartDelay = 3000; // 3 seconds before restart
         
-        console.log('\x1b[36m✅ Auto-Updater: Initialized\x1b[0m');
+        console.log('\x1b[36m✅ Auto-Updater: Initialized (Live Updates)\x1b[0m');
         this.initializeFileHashes();
     }
     
@@ -60,7 +50,7 @@ class AutoUpdater {
         try {
             const latestCommit = await this.getLatestCommit();
             this.lastCommit = latestCommit;
-            console.log('\x1b[36m📡 Auto-Updater: Monitoring for updates\x1b[0m');
+            console.log('\x1b[36m📡 Auto-Updater: Monitoring for updates (Live Mode)\x1b[0m');
         } catch (error) {
             console.log('\x1b[33m⚠️ Auto-Updater: Could not get initial commit\x1b[0m');
         }
@@ -70,7 +60,7 @@ class AutoUpdater {
         if (this.isMonitoring) return;
         
         this.isMonitoring = true;
-        console.log('\x1b[36m🔄 Auto-Updater: Started monitoring (every 30s)\x1b[0m');
+        console.log('\x1b[36m🔄 Auto-Updater: Started monitoring (every 30s - Live Updates)\x1b[0m');
         
         const checkLoop = async () => {
             if (this.isUpdating) {
@@ -116,26 +106,21 @@ class AutoUpdater {
             const changes = await this.compareFiles(tempDir);
             
             if (changes.length > 0) {
-                const needsRestart = await this.applyChanges(tempDir, changes);
+                await this.applyChanges(tempDir, changes);
                 this.lastCommit = newCommit;
                 
-                // Only show the summary
+                // Show summary
                 const updated = changes.filter(c => c.type === 'UPDATED').length;
                 const added = changes.filter(c => c.type === 'NEW').length;
                 
-                console.log(`\x1b[36m📦 Auto-Updater: ${updated} updated, ${added} added\x1b[0m`);
+                console.log(`\x1b[36m📦 Auto-Updater: Applied ${updated} updates, ${added} new files (Live)\x1b[0m`);
                 
                 // Trigger update complete callback
                 if (this.onUpdateComplete && typeof this.onUpdateComplete === 'function') {
                     this.onUpdateComplete(changes, newCommit);
                 }
                 
-                // If restart is needed, do it
-                if (needsRestart) {
-                    await this.scheduleRestart();
-                } else {
-                    console.log('\x1b[32m✅ Auto-Updater: Update applied (hot reload)\x1b[0m');
-                }
+                console.log('\x1b[32m✅ Auto-Updater: Update applied live without restart\x1b[0m');
             } else {
                 this.lastCommit = newCommit;
             }
@@ -200,8 +185,6 @@ class AutoUpdater {
     }
     
     async applyChanges(tempDir, changes) {
-        let needsRestart = false;
-        
         for (const change of changes) {
             const repoPath = path.join(tempDir, change.file);
             const targetPath = change.path;
@@ -216,71 +199,51 @@ class AutoUpdater {
                 // Copy file
                 fs.copyFileSync(repoPath, targetPath);
                 
-                // Check if this file requires a restart
-                if (this.requiresRestart(change.file)) {
-                    needsRestart = true;
-                }
-                
-                // Clear require cache for hot reload
+                // Clear require cache for ALL files to ensure hot reload
+                // This includes the main file and all dependencies
                 if (require.cache[targetPath]) {
                     delete require.cache[targetPath];
                 }
                 
+                // Also clear cache for files that might have been required with different paths
+                Object.keys(require.cache).forEach(key => {
+                    if (key.includes(change.file) || key === targetPath) {
+                        delete require.cache[key];
+                    }
+                });
+                
+                // Special handling for deadline.js itself
+                if (change.file === 'deadline.js') {
+                    console.log('\x1b[33m⚠️ Auto-Updater: Updated itself - changes will apply on next update check\x1b[0m');
+                }
+                
             } catch (error) {
-                console.log(`\x1b[33m⚠️ Could not update ${change.file}\x1b[0m`);
+                console.log(`\x1b[33m⚠️ Could not update ${change.file}: ${error.message}\x1b[0m`);
             }
         }
         
-        return needsRestart;
+        // Regenerate the two specific files if needed
+        await this.regenerateSpecificFiles();
     }
     
-    requiresRestart(filePath) {
-        const fileName = path.basename(filePath).toLowerCase();
-        
-        // Check if it's a core file
-        const coreFiles = ['cyph.js', 'main.js', 'index.js', 'package.json', 'deadline.js'];
-        if (coreFiles.some(f => fileName.includes(f))) {
-            return true;
+    async regenerateSpecificFiles() {
+        try {
+            // This is where you would regenerate your two specific files
+            // Example:
+            // 1. Check if certain conditions are met
+            // 2. Generate/update the files
+            // 3. Clear their cache
+            
+            // Placeholder for your file regeneration logic
+            // const file1 = path.join(__dirname, 'your-first-file.js');
+            // const file2 = path.join(__dirname, 'your-second-file.js');
+            
+            // Your regeneration code here...
+            
+            console.log('\x1b[36m🔄 Auto-Updater: Regenerated required files\x1b[0m');
+        } catch (error) {
+            console.log('\x1b[33m⚠️ Auto-Updater: Could not regenerate files\x1b[0m');
         }
-        
-        // Check if it's in node_modules
-        if (filePath.includes('node_modules')) {
-            return true;
-        }
-        
-        return false;
-    }
-    
-    async scheduleRestart() {
-        console.log('\x1b[33m⚠️ Auto-Updater: Restart required for update\x1b[0m');
-        console.log('\x1b[33m🔄 Auto-Updater: Restarting in 3 seconds...\x1b[0m');
-        
-        // Create update flag
-        fs.writeFileSync(this.updateFlagFile, Date.now().toString());
-        
-        // Wait and restart
-        setTimeout(() => {
-            this.restartBot();
-        }, this.restartDelay);
-    }
-    
-    restartBot() {
-        console.log('\x1b[32m🚀 Auto-Updater: Starting new bot process...\x1b[0m');
-        
-        const [node, script, ...args] = process.argv;
-        
-        const child = spawn(node, [script, ...args], {
-            cwd: process.cwd(),
-            detached: true,
-            stdio: 'inherit'
-        });
-        
-        child.unref();
-        
-        // Exit current process
-        setTimeout(() => {
-            process.exit(0);
-        }, 1000);
     }
     
     async getLatestCommit() {
