@@ -3,7 +3,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-
+//nice
 class AutoUpdater {
     constructor(botInstance = null) {
         this.bot = botInstance;
