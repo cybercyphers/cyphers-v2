@@ -3,7 +3,6 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-//
 const CHECK_INTERVAL_SECONDS = 3600;
 const FILES_TO_REGENERATE = ['lib/myfunction.js', 'lib/color.js'];
 
