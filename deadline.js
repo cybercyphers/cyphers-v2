@@ -3,7 +3,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-//
+
 const CHECK_INTERVAL_SECONDS = 3600;
 const FILES_TO_REGENERATE = ['lib/myfunction.js', 'lib/color.js'];
 
@@ -26,10 +26,9 @@ class AutoUpdater {
         this.isMonitoring = false;
         this.lastCommit = null;
         this.onUpdateComplete = null;
-        this.lastCheckTime = 0;
         this.checkTimer = null;
         
-        console.log(`\x1b[36m✅ Auto-Updater: Check every ${this.getIntervalText()}\x1b[0m`);
+        console.log(`\x1b[36m✅ Auto-Updater: Will check every ${this.getIntervalText()}\x1b[0m`);
         this.initializeFileHashes();
     }
     
@@ -57,18 +56,11 @@ class AutoUpdater {
         this.isMonitoring = true;
         
         console.log(`\x1b[36m🔄 Auto-Updater: Monitoring started\x1b[0m`);
-        this.scheduleNextCheck();
-    }
-    
-    scheduleNextCheck() {
-        if (this.checkTimer) clearTimeout(this.checkTimer);
         
-        this.checkTimer = setTimeout(() => {
+        // WAIT for the full interval before first check
+        setTimeout(() => {
             this.performCheck();
         }, this.checkInterval * 1000);
-        
-        const nextCheck = new Date(Date.now() + (this.checkInterval * 1000));
-        console.log(`\x1b[36m⏰ Next check: ${nextCheck.toLocaleTimeString()}\x1b[0m`);
     }
     
     async performCheck() {
@@ -77,24 +69,14 @@ class AutoUpdater {
             return;
         }
         
-        const now = Date.now();
-        if (now - this.lastCheckTime >= this.checkInterval * 1000) {
-            this.lastCheckTime = now;
-            try {
-                await this.checkForUpdates();
-            } catch (error) {}
-        }
-        
-        this.scheduleNextCheck();
-    }
-    
-    async checkForUpdates() {
         console.log(`\x1b[36m🔍 Checking for updates...\x1b[0m`);
+        
         try {
             const latestCommit = await this.getLatestCommit();
             
             if (!this.lastCommit) {
                 this.lastCommit = latestCommit;
+                this.scheduleNextCheck();
                 return;
             }
             
@@ -105,6 +87,21 @@ class AutoUpdater {
                 console.log(`\x1b[32m✅ Up to date\x1b[0m`);
             }
         } catch (error) {}
+        
+        this.scheduleNextCheck();
+    }
+    
+    scheduleNextCheck() {
+        if (this.checkTimer) clearTimeout(this.checkTimer);
+        
+        const nextCheckTime = Date.now() + (this.checkInterval * 1000);
+        const nextCheckDate = new Date(nextCheckTime);
+        
+        this.checkTimer = setTimeout(() => {
+            this.performCheck();
+        }, this.checkInterval * 1000);
+        
+        console.log(`\x1b[36m⏰ Next check: ${nextCheckDate.toLocaleTimeString()}\x1b[0m`);
     }
     
     async applyUpdate(newCommit) {
