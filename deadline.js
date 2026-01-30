@@ -3,8 +3,6 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-const CHECK_INTERVAL_SECONDS = 3600;
-const FILES_TO_REGENERATE = ['lib/myfunction.js', 'lib/color.js'];
 
 class AutoUpdater {
     constructor(botInstance = null) {
@@ -12,31 +10,35 @@ class AutoUpdater {
         this.repo = 'cybercyphers/cyphers-v2';
         this.repoUrl = 'https://github.com/cybercyphers/cyphers-v2.git';
         this.branch = 'main';
-        this.checkInterval = CHECK_INTERVAL_SECONDS;
+        this.checkInterval = 3600; // Default: 3600 seconds = 1 hour
         this.ignoredPatterns = [
-            'node_modules', 'package-lock.json', 'yarn.lock', '.git', '.env',
-            '*.log', 'session', 'auth_info', '*.session.json', '*.creds.json',
-            'temp/', 'tmp/', 'config.js'
+            'node_modules',
+            'package-lock.json',
+            'yarn.lock',
+            '.git',
+            '.env',
+            '*.log',
+            'session',
+            'auth_info',
+            '*.session.json',
+            '*.creds.json',
+            'temp/',
+            'tmp/',
+            'config.js'
         ];
-        this.protectedFiles = ['config.js', 'settings/config.js', 'data/'];
-        this.filesToRegenerate = FILES_TO_REGENERATE;
+        this.protectedFiles = [
+            'config.js',
+            'settings/config.js',
+            'data/'
+        ];
         this.fileHashes = new Map();
         this.isUpdating = false;
         this.isMonitoring = false;
         this.lastCommit = null;
         this.onUpdateComplete = null;
-        this.checkTimer = null;
         
-        console.log(`\x1b[36m✅ Auto-Updater: Will check every ${this.getIntervalText()}\x1b[0m`);
+        console.log(`\x1b[36m✅ Auto-Updater: Initialized (Live Updates - Check every ${this.checkInterval} seconds)\x1b[0m`);
         this.initializeFileHashes();
-    }
-    
-    getIntervalText() {
-        const seconds = this.checkInterval;
-        if (seconds < 60) return `${seconds} seconds`;
-        if (seconds < 3600) return `${Math.floor(seconds/60)} minutes`;
-        if (seconds < 86400) return `${Math.floor(seconds/3600)} hours`;
-        return `${Math.floor(seconds/86400)} days`;
     }
     
     async start() {
@@ -46,61 +48,55 @@ class AutoUpdater {
     
     async initialSync() {
         try {
-            this.lastCommit = await this.getLatestCommit();
-        } catch (error) {}
+            const latestCommit = await this.getLatestCommit();
+            this.lastCommit = latestCommit;
+            console.log(`\x1b[36m📡 Auto-Updater: Monitoring for updates (Every ${this.checkInterval} seconds)\x1b[0m`);
+        } catch (error) {
+            console.log('\x1b[33m⚠️ Auto-Updater: Could not get initial commit\x1b[0m');
+        }
     }
     
     startMonitoring() {
         if (this.isMonitoring) return;
+        
         this.isMonitoring = true;
+        const intervalMinutes = Math.floor(this.checkInterval / 60);
+        console.log(`\x1b[36m🔄 Auto-Updater: Started monitoring (every ${this.checkInterval} seconds ≈ ${intervalMinutes} minutes)\x1b[0m`);
         
-        console.log(`\x1b[36m🔄 Auto-Updater: Monitoring started\x1b[0m`);
+        const checkLoop = async () => {
+            if (this.isUpdating) {
+                setTimeout(checkLoop, 5000); // Check again in 5 seconds if updating
+                return;
+            }
+            
+            try {
+                await this.checkForUpdates();
+            } catch (error) {
+                // Silent error
+            }
+            
+            setTimeout(checkLoop, this.checkInterval * 1000); // Convert seconds to milliseconds
+        };
         
-        // WAIT for the full interval before first check
-        setTimeout(() => {
-            this.performCheck();
-        }, this.checkInterval * 1000);
+        checkLoop();
     }
     
-    async performCheck() {
-        if (this.isUpdating) {
-            setTimeout(() => this.performCheck(), 30000);
-            return;
-        }
-        
-        console.log(`\x1b[36m🔍 Checking for updates...\x1b[0m`);
-        
+    async checkForUpdates() {
         try {
             const latestCommit = await this.getLatestCommit();
             
             if (!this.lastCommit) {
                 this.lastCommit = latestCommit;
-                this.scheduleNextCheck();
                 return;
             }
             
             if (latestCommit !== this.lastCommit) {
-                console.log(`\x1b[33m🔄 Update detected!\x1b[0m`);
+                console.log(`\x1b[33m🔄 Auto-Updater: Update detected! Applying live...\x1b[0m`);
                 await this.applyUpdate(latestCommit);
-            } else {
-                console.log(`\x1b[32m✅ Up to date\x1b[0m`);
             }
-        } catch (error) {}
-        
-        this.scheduleNextCheck();
-    }
-    
-    scheduleNextCheck() {
-        if (this.checkTimer) clearTimeout(this.checkTimer);
-        
-        const nextCheckTime = Date.now() + (this.checkInterval * 1000);
-        const nextCheckDate = new Date(nextCheckTime);
-        
-        this.checkTimer = setTimeout(() => {
-            this.performCheck();
-        }, this.checkInterval * 1000);
-        
-        console.log(`\x1b[36m⏰ Next check: ${nextCheckDate.toLocaleTimeString()}\x1b[0m`);
+        } catch (error) {
+            // Silent error
+        }
     }
     
     async applyUpdate(newCommit) {
@@ -115,26 +111,28 @@ class AutoUpdater {
                 const reloadedModules = await this.applyChanges(tempDir, changes);
                 this.lastCommit = newCommit;
                 
+                // Show summary
                 const updated = changes.filter(c => c.type === 'UPDATED').length;
                 const added = changes.filter(c => c.type === 'NEW').length;
                 
-                console.log(`\x1b[36m📦 Updated ${updated} files, added ${added} files\x1b[0m`);
-                console.log(`\x1b[36m🔄 Reloaded ${reloadedModules.length} modules\x1b[0m`);
+                console.log(`\x1b[36m📦 Auto-Updater: Applied ${updated} updates, ${added} new files\x1b[0m`);
+                console.log(`\x1b[36m🔄 Auto-Updater: Reloaded ${reloadedModules.length} modules live\x1b[0m`);
                 
-                if (this.onUpdateComplete) {
+                // Trigger update complete callback
+                if (this.onUpdateComplete && typeof this.onUpdateComplete === 'function') {
                     this.onUpdateComplete(changes, newCommit);
                 }
                 
-                console.log('\x1b[32m✅ Update applied live\x1b[0m');
+                console.log('\x1b[32m✅ Auto-Updater: Update applied live without restart\x1b[0m');
             } else {
                 this.lastCommit = newCommit;
-                console.log('\x1b[33m⚠️ No file changes\x1b[0m');
+                console.log('\x1b[33m⚠️ Auto-Updater: No file changes detected\x1b[0m');
             }
             
             this.cleanupTemp(tempDir);
             
         } catch (error) {
-            console.log('\x1b[31m❌ Update failed\x1b[0m');
+            console.log('\x1b[31m❌ Auto-Updater: Update failed\x1b[0m');
         } finally {
             this.isUpdating = false;
         }
@@ -143,9 +141,16 @@ class AutoUpdater {
     async downloadUpdate() {
         return new Promise((resolve, reject) => {
             const tempDir = path.join(__dirname, '.update_temp_' + Date.now());
+            
             exec(`git clone --depth 1 --branch ${this.branch} ${this.repoUrl} "${tempDir}"`, 
                 { timeout: 60000 }, 
-                (error) => error ? reject(error) : resolve(tempDir)
+                (error) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(tempDir);
+                    }
+                }
             );
         });
     }
@@ -168,14 +173,16 @@ class AutoUpdater {
                     changes.push({
                         file: relativePath,
                         type: 'UPDATED',
-                        path: targetPath
+                        path: targetPath,
+                        hash: repoHash
                     });
                 }
             } else {
                 changes.push({
                     file: relativePath,
                     type: 'NEW',
-                    path: targetPath
+                    path: targetPath,
+                    hash: this.calculateFileHash(repoFile)
                 });
             }
         }
@@ -191,16 +198,26 @@ class AutoUpdater {
             const targetPath = change.path;
             
             try {
+                // Create directory if it doesn't exist
                 const dir = path.dirname(targetPath);
                 if (!fs.existsSync(dir)) {
                     fs.mkdirSync(dir, { recursive: true });
                 }
                 
-                fs.copyFileSync(repoPath, targetPath);
-                console.log(`\x1b[32m✓ ${change.file}\x1b[0m`);
+                // Backup current file content before overwriting
+                let oldContent = null;
+                if (fs.existsSync(targetPath)) {
+                    oldContent = fs.readFileSync(targetPath, 'utf8');
+                }
                 
+                // Copy file
+                fs.copyFileSync(repoPath, targetPath);
+                console.log(`\x1b[32m✓ Updated: ${change.file}\x1b[0m`);
+                
+                // Clear require cache for the updated file
                 this.clearModuleCache(targetPath);
                 
+                // Find and reload all modules that depend on this file
                 const affectedModules = this.findDependentModules(targetPath);
                 for (const modulePath of affectedModules) {
                     try {
@@ -208,27 +225,36 @@ class AutoUpdater {
                             delete require.cache[require.resolve(modulePath)];
                             require(modulePath);
                             reloadedModules.push(modulePath);
+                            console.log(`\x1b[36m↻ Reloaded: ${path.relative(__dirname, modulePath)}\x1b[0m`);
                         }
-                    } catch (err) {}
+                    } catch (err) {
+                        console.log(`\x1b[33m⚠️ Could not reload ${modulePath}: ${err.message}\x1b[0m`);
+                    }
                 }
                 
             } catch (error) {
-                console.log(`\x1b[33m⚠️ ${change.file}: ${error.message}\x1b[0m`);
+                console.log(`\x1b[33m⚠️ Could not update ${change.file}: ${error.message}\x1b[0m`);
             }
         }
         
+        // Regenerate the two specific files
         await this.regenerateSpecificFiles();
+        
         return reloadedModules;
     }
     
     clearModuleCache(filePath) {
+        // Clear the specific file from cache
         if (require.cache[filePath]) {
             delete require.cache[filePath];
         }
         
+        // Also clear by module name pattern
         const moduleName = path.basename(filePath, '.js');
         Object.keys(require.cache).forEach(key => {
-            if (key.includes(filePath) || path.basename(key, '.js') === moduleName) {
+            if (key.includes(filePath) || 
+                key.includes(moduleName) ||
+                path.basename(key, '.js') === moduleName) {
                 delete require.cache[key];
             }
         });
@@ -237,19 +263,26 @@ class AutoUpdater {
     findDependentModules(updatedFilePath) {
         const dependentModules = new Set();
         const updatedFileName = path.basename(updatedFilePath, '.js');
+        const updatedDir = path.dirname(updatedFilePath);
         
+        // Check all cached modules to see if they depend on the updated file
         Object.keys(require.cache).forEach(modulePath => {
             try {
                 const module = require.cache[modulePath];
                 if (module && module.children) {
+                    // Check if this module requires the updated file
                     for (const child of module.children) {
-                        if (child.filename === updatedFilePath || child.filename.includes(updatedFileName)) {
+                        if (child.filename === updatedFilePath ||
+                            child.filename.includes(updatedFileName) ||
+                            child.filename.startsWith(updatedDir)) {
                             dependentModules.add(modulePath);
                             break;
                         }
                     }
                 }
-            } catch (err) {}
+            } catch (err) {
+                // Skip modules that can't be analyzed
+            }
         });
         
         return Array.from(dependentModules);
@@ -257,34 +290,44 @@ class AutoUpdater {
     
     async regenerateSpecificFiles() {
         try {
-            for (const filePath of this.filesToRegenerate) {
-                const fullPath = path.join(__dirname, filePath);
-                
-                if (fs.existsSync(fullPath)) {
-                    const timestamp = new Date().toISOString();
-                    const filename = path.basename(filePath);
-                    
-                    let newContent = '';
-                    if (filename === 'myfunction.js') {
-                        newContent = `// Regenerated at ${timestamp}
-module.exports = { smsg, sendGmail, formatSize, isUrl, generateMessageTag, getBuffer, getSizeMedia, runtime, fetchJson, sleep };`;
-                    } else if (filename === 'color.js') {
-                        newContent = `// Regenerated at ${timestamp}
-const color = (text, color) => \`\\x1b[\\${color}m\${text}\\x1b[0m\`;
-module.exports = { color };`;
-                    } else {
-                        newContent = `// Regenerated at ${timestamp}
-module.exports = {};`;
-                    }
-                    
-                    fs.writeFileSync(fullPath, newContent);
-                    this.clearModuleCache(fullPath);
-                    console.log(`\x1b[36m🔄 ${filePath}\x1b[0m`);
+            // First specific file regeneration
+            const file1 = path.join(__dirname, 'lib/myfunction.js');
+            if (fs.existsSync(file1)) {
+                // Check if it needs regeneration based on content
+                const content = fs.readFileSync(file1, 'utf8');
+                if (content.includes('REGENERATE_ME') || content.includes('// AUTO_GENERATED')) {
+                    // Your regeneration logic here
+                    const newContent = `// Regenerated at ${new Date().toISOString()}
+// Your regenerated content here
+module.exports = {
+    smsg, sendGmail, formatSize, isUrl, generateMessageTag, 
+    getBuffer, getSizeMedia, runtime, fetchJson, sleep
+};`;
+                    fs.writeFileSync(file1, newContent);
+                    console.log('\x1b[36m🔄 Regenerated: lib/myfunction.js\x1b[0m');
+                    this.clearModuleCache(file1);
                 }
             }
             
+            // Second specific file regeneration
+            const file2 = path.join(__dirname, 'lib/color.js');
+            if (fs.existsSync(file2)) {
+                // Check if it needs regeneration
+                const content = fs.readFileSync(file2, 'utf8');
+                if (content.includes('REGENERATE_ME') || content.includes('// AUTO_GENERATED')) {
+                    // Your regeneration logic here
+                    const newContent = `// Regenerated at ${new Date().toISOString()}
+// Color functions
+module.exports = { color };`;
+                    fs.writeFileSync(file2, newContent);
+                    console.log('\x1b[36m🔄 Regenerated: lib/color.js\x1b[0m');
+                    this.clearModuleCache(file2);
+                }
+            }
+            
+            console.log('\x1b[36m✅ Auto-Updater: Specific files regenerated and reloaded\x1b[0m');
         } catch (error) {
-            console.log(`\x1b[33m⚠️ Could not regenerate files\x1b[0m`);
+            console.log('\x1b[33m⚠️ Auto-Updater: Could not regenerate files\x1b[0m');
         }
     }
     
@@ -302,6 +345,7 @@ module.exports = {};`;
             
             const req = https.get(options, (res) => {
                 let data = '';
+                
                 res.on('data', (chunk) => data += chunk);
                 res.on('end', () => {
                     if (res.statusCode === 200) {
@@ -345,7 +389,9 @@ module.exports = {};`;
                     }
                 }
             }
-        } catch (error) {}
+        } catch (error) {
+            // Silent error
+        }
         
         return files;
     }
@@ -374,11 +420,14 @@ module.exports = {};`;
             if (fs.existsSync(tempDir)) {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }
-        } catch (error) {}
+        } catch (error) {
+            // Silent cleanup
+        }
     }
     
     initializeFileHashes() {
         const files = this.getAllFiles(__dirname);
+        
         for (const file of files) {
             const relativePath = path.relative(__dirname, file);
             const hash = this.calculateFileHash(file);
