@@ -3,7 +3,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const https = require('https');
-
+//hi
 const CHECK_INTERVAL_SECONDS = 3600; // ← CHANGE THIS VALUE
 
 // The two files that need to be regenerated after updates
